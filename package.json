@@ -1,0 +1,24 @@
+{
+  "name": "tradewizard",
+  "version": "2.0.0",
+  "description": "AI-powered export readiness platform for South African SMEs",
+  "private": true,
+  "workspaces": [
+    "tradewizard",
+    "backend"
+  ],
+  "scripts": {
+    "prepare": "husky",
+    "frontend:dev": "cd tradewizard && npm run dev",
+    "backend:dev": "cd backend && npm run dev",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "husky": "^9.0.11",
+    "lint-staged": "^15.2.2",
+    "prettier": "^3.2.5"
+  }
+}

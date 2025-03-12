@@ -1,0 +1,54 @@
+{
+  `path`: `/tmp/TradeWizard/cursor.rules`,
+  `content`: `# TradeWizard Development Rules
+
+# Code Quality Standards
+- Modularity: Components should have single responsibilities
+- Reusability: Common functionality should be abstracted into reusable utilities
+- Readability: Code should be self-documenting with clear naming conventions
+- Consistency: Follow established patterns throughout the codebase
+- Testing: Critical paths should have automated tests
+
+# Format Rules
+- Use 2 spaces for indentation
+- Max line length: 100 characters
+- Use semicolons in JavaScript/TypeScript
+- Use single quotes for strings
+- Always use curly braces for control statements
+- Trailing commas in multiline objects and arrays
+
+# Naming Conventions
+- React components: PascalCase (e.g., ExportReadinessScore)
+- Functions and variables: camelCase (e.g., fetchComplianceData)
+- Constants: UPPER_CASE (e.g., API_ENDPOINT)
+- Files: kebab-case (e.g., export-readiness-component.tsx)
+- Database tables: snake_case (e.g., user_profiles)
+
+# Directory Structure
+- Follow the established project structure in TradeWizard_2.0_Codebase_Structure_and_Tech_Stack.docx
+- Group files by feature rather than by type
+- Keep related files close to each other
+
+# UI/UX Principles
+- Use shadcn UI components wherever possible
+- Follow TailwindCSS conventions for styling
+- Mobile-first approach for all UI components
+- Use established design patterns from the TradeWizard design system
+
+# Commit Message Format
+- feat: A new feature
+- fix: A bug fix
+- docs: Documentation changes
+- style: Code style changes (formatting, missing semicolons, etc.)
+- refactor: Code changes that neither fix bugs nor add features
+- perf: Performance improvements
+- test: Adding or modifying tests
+- chore: Changes to the build process or auxiliary tools
+
+# Pull Request Process
+- Reference issue numbers in PR titles
+- Ensure all automated tests pass
+- Require at least one code review before merging
+- Keep PRs focused on a single concern
+`
+}

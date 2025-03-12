@@ -1,6 +1,6 @@
 'use client';
 import { useState, FormEvent, ChangeEvent } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../../../lib/supabase';
 
 export default function SignUpForm() {
   const [email, setEmail] = useState('');

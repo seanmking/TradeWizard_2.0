@@ -88,3 +88,4 @@ tradewizard/
 ## License
 
 This project is proprietary and confidential. Unauthorized use, reproduction, or distribution is prohibited.
+# TradeWizard_2.0

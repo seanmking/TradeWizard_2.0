@@ -83,6 +83,33 @@ We will implement a hybrid architecture that maintains the three-layer design wh
 - **Well-Defined Interfaces:** Establish clear API contracts between components
 - **Future Expansion:** Structure code to allow extraction into true microservices when ready to scale
 
+### 3.3 Project Structure Clarification
+
+The TradeWizard 2.0 project follows a monorepo approach for the MVP stage, with the following structure:
+
+```
+tradewizard_2.0/
+├── frontend/              # Next.js application (not a git submodule)
+│   ├── app/               # App router directories
+│   ├── components/        # UI components
+│   └── public/            # Static assets
+│
+├── backend/               # Express.js server
+│   ├── src/
+│   │   ├── api/           # API routes and controllers
+│   │   ├── services/      # Business logic
+│   │   └── mcp/           # Middleware Component Providers
+│
+├── lib/                   # Shared utilities and types
+└── app/                   # Root application configuration
+```
+
+**Important Notes:**
+- All components exist within a single repository
+- No git submodules should be used in this project
+- Future versions may extract MCPs into separate repositories, but during MVP development, everything remains in one codebase
+- The Next.js application and Express backend are part of the same monorepo, not separate repositories
+
 ## 4. Technology Stack
 
 ### 4.1 Frontend

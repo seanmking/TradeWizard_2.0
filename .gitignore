@@ -8,6 +8,7 @@ yarn-error.log
 /.next/
 /out/
 next-env.d.ts
+.nextjs.pid
 
 # Environment variables
 .env
@@ -41,4 +42,7 @@ yarn-error.log*
 
 # Temporary files
 *.tmp
-*.temp 
+*.temp
+
+# Generated content
+summary-response.txt 

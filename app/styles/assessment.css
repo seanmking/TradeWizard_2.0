@@ -1,0 +1,235 @@
+/* Assessment Feature Styles */
+
+/* Custom color variables to maintain consistency */
+:root {
+  --primary-blue: #3B82F6;  /* Blue primary */
+  --primary-blue-dark: #2563EB;
+  --primary-blue-light: #60A5FA;
+  --secondary-gray: #6B7280;  /* Gray secondary */
+  --secondary-gray-light: #9CA3AF;
+  --secondary-gray-dark: #4B5563;
+  --background-light: #F9FAFB;
+  --success-green: #10B981;
+  --warning-yellow: #FBBF24;
+  --danger-red: #EF4444;
+}
+
+/* Typography */
+.assessment-text {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Message Bubbles */
+.message-bubble-user {
+  @apply bg-gray-200 text-gray-800 rounded-xl px-4 py-3 shadow-sm max-w-[80%] ml-auto;
+  border-bottom-right-radius: 0.25rem;
+}
+
+.message-bubble-assistant {
+  @apply bg-blue-500 text-white rounded-xl px-4 py-3 shadow-sm max-w-[80%];
+  border-bottom-left-radius: 0.25rem;
+}
+
+/* Typing Animation */
+.typing-animation div {
+  @apply w-2 h-2 bg-white rounded-full;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-animation div:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-animation div:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% { 
+    transform: scale(0);
+  } 
+  40% { 
+    transform: scale(1.0);
+  }
+}
+
+/* Progress Indicator */
+.progress-step {
+  @apply h-2 rounded-full transition-all duration-300;
+}
+
+.progress-step-completed {
+  @apply bg-blue-500;
+}
+
+.progress-step-current {
+  @apply bg-blue-200;
+}
+
+.progress-step-future {
+  @apply bg-gray-200;
+}
+
+/* Animated Avatar */
+.avatar-container {
+  @apply relative w-10 h-10 rounded-full overflow-hidden;
+  transition: all 0.3s ease;
+}
+
+.avatar-typing {
+  @apply ring-2 ring-blue-500 ring-offset-2;
+}
+
+.avatar-typing-indicator {
+  @apply absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-white;
+}
+
+/* Input styles */
+.user-input {
+  @apply w-full p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+}
+
+/* Button styles */
+.send-button {
+  @apply ml-2 p-3 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors duration-200;
+}
+
+.send-button-disabled {
+  @apply bg-gray-300 text-gray-500 cursor-not-allowed;
+}
+
+/* Results page styles */
+.score-circle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.insight-card {
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.insight-strength {
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+.insight-neutral {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.insight-area {
+  @apply bg-yellow-50 border-l-4 border-yellow-500;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .message-bubble-assistant, .message-bubble-user {
+    max-width: 90%;
+  }
+}
+
+/* Accessibility focus styles */
+.focus-visible:focus {
+  @apply outline-none ring-2 ring-blue-500 ring-offset-2;
+}
+
+/* Additional animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes pingSlow {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-score-fill {
+  animation: scoreFill 1.5s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease-out;
+}
+
+.animate-ping-slow {
+  animation: pingSlow 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.fade-out {
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+}
+
+/* Reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .typing-animation div,
+  .animate-fade-in,
+  .animate-slide-in-left,
+  .animate-slide-in-right,
+  .animate-ping-slow,
+  .animate-pulse,
+  .animate-score-fill {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Assessment Results Page Styles */
+@keyframes scoreFill {
+  from {
+    stroke-dasharray: 0 283;
+  }
+  to {
+    stroke-dasharray: attr(data-score) 283;
+  }
+}
+
+.animate-score-fill {
+  animation: scoreFill 1.5s ease-out forwards;
+}
+
+.insight-card {
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.insight-strength {
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+.insight-neutral {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Reduced motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .animate-score-fill,
+  .animate-fade-in,
+  .animate-slide-in-left,
+  .animate-slide-in-right {
+    animation: none !important;
+    transition: none !important;
+  }
+} 

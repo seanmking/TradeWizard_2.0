@@ -1,3 +1,5 @@
+"use client";
+
 /// <reference path="../../types/declarations.d.ts" />
 import React, { useState, useEffect, useRef } from 'react';
 import ConversationThread from './ConversationThread';
@@ -13,24 +15,48 @@ import {
   saveAssessmentData
 } from '../../lib/services/assessmentService';
 
+// Add a fallback for server-only content
+const FALLBACK_QUESTIONS = [
+  {
+    id: 'introduction',
+    prompt: "Hi there! I'm Sarah, your export readiness advisor. Could you tell me your name, role, and business name?",
+    extraction_patterns: {
+      first_name: /(?:my name is|i'm|im|i am|name is|hi|hello|hey|this is|i'm called)\s+([a-zA-Z]+)/i,
+      business_name: /(?:(?:at|for|from|with|of) ([\w\s&\-\.]+))/i,
+      role: /(?:(?:i'm|im|i am)(?: a| the)? ([^,.]+? (?:at|in|of|for)))/i
+    }
+  },
+  {
+    id: 'website_analysis',
+    prompt: "Thanks {{first_name}}! Do you have a website for {{business_name}}? If yes, please share the URL.",
+    extraction_patterns: {
+      website_url: /(https?:\/\/[^\s]+)/g
+    }
+  }
+];
+
+// Use imported questions with fallback
+const questions = assessmentQuestions.length > 0 ? assessmentQuestions : FALLBACK_QUESTIONS;
+
 interface Message {
   id: string;
   sender: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  isCompletionMessage?: boolean;
 }
 
 const InitialAssessment: React.FC = () => {
   // State for the assessment
   const [currentStep, setCurrentStep] = useState(0);
-  const [currentQuestionId, setCurrentQuestionId] = useState(assessmentQuestions[0].id);
+  const [currentQuestionId, setCurrentQuestionId] = useState(questions[0].id);
   const [isTyping, setIsTyping] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
       sender: 'assistant',
-      content: assessmentQuestions[0].prompt,
+      content: questions[0].prompt,
       timestamp: new Date(),
     },
   ]);
@@ -79,7 +105,7 @@ const InitialAssessment: React.FC = () => {
     setMessages(prev => [...prev, userMessage]);
     
     // Validate the response
-    const currentQuestion = assessmentQuestions.find(q => q.id === currentQuestionId);
+    const currentQuestion = questions.find(q => q.id === currentQuestionId);
     if (!currentQuestion) return;
     
     // Pass the question ID, not the question object
@@ -106,8 +132,8 @@ const InitialAssessment: React.FC = () => {
         // Determine the next question
         const nextStepIndex = currentStep + 1;
         
-        if (nextStepIndex < assessmentQuestions.length) {
-          const nextQuestion = assessmentQuestions[nextStepIndex];
+        if (nextStepIndex < questions.length) {
+          const nextQuestion = questions[nextStepIndex];
           
           // Format the prompt with user data if needed
           const formattedPrompt = formatPrompt(nextQuestion.prompt, {
@@ -142,6 +168,7 @@ const InitialAssessment: React.FC = () => {
             sender: 'assistant',
             content: "Thank you for completing the initial assessment! I'm analyzing your responses to prepare your export readiness report. This will just take a moment...",
             timestamp: new Date(),
+            isCompletionMessage: true
           };
           
           setMessages(prev => [...prev, completionMessage]);
@@ -150,7 +177,7 @@ const InitialAssessment: React.FC = () => {
           setIsTransitioning(true);
           setTimeout(() => {
             window.location.href = '/assessment-results';
-          }, 3000);
+          }, 8000); // Increased from 3000ms to 8000ms (8 seconds) to make it more noticeable
         }
         
         // Stop typing indicator
@@ -209,7 +236,7 @@ const InitialAssessment: React.FC = () => {
   }, []);
   
   // Calculate progress percentage
-  const progressPercentage = (currentStep / (assessmentQuestions.length - 1)) * 100;
+  const progressPercentage = (currentStep / (questions.length - 1)) * 100;
   
   return (
     <div className={`flex flex-col h-full ${isTransitioning ? 'fade-out' : ''}`}>
@@ -220,11 +247,11 @@ const InitialAssessment: React.FC = () => {
             Export Readiness Assessment
           </h2>
           <span className={`text-blue-500 ${isMobile ? 'text-xs' : 'text-sm'}`}>
-            {currentStep + 1} of {assessmentQuestions.length}
+            {currentStep + 1} of {questions.length}
           </span>
         </div>
         <ProgressIndicator 
-          steps={assessmentQuestions.length} 
+          steps={questions.length} 
           currentStep={currentStep} 
         />
       </div>

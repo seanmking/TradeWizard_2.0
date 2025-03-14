@@ -6,7 +6,7 @@
  */
 
 import type { WebsiteAnalysisResult } from './index';
-import { websiteAnalysisController } from './controllers/website-analysis.controller';
+import { analyzeWebsite as analyzeWebsiteFunc } from './controllers/website-analysis.controller';
 
 /**
  * Analyze a website and return structured data
@@ -16,8 +16,8 @@ export async function analyzeWebsite(url: string): Promise<WebsiteAnalysisResult
   try {
     console.log(`MCP analyzing website: ${url}`);
     
-    // Use the website analysis controller
-    const enhancedResult = await websiteAnalysisController.analyzeWebsite(url);
+    // Use the website analysis function
+    const enhancedResult = await analyzeWebsiteFunc(url);
     
     // Convert to the expected result format
     return {

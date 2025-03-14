@@ -53,7 +53,13 @@ export const migrateAssessmentData = async (userId: string): Promise<boolean> =>
     // Simulate successful migration
     console.log(`Assessment data migrated to user ${userId}`, data);
     
-    // Clear local storage data after migration
+    // Store the assessment data with the userId for persistence
+    localStorage.setItem('userAssessment', JSON.stringify({
+      userId,
+      data
+    }));
+    
+    // Remove the anonymous assessment data
     localStorage.removeItem('initialAssessment');
     
     return true;
@@ -77,5 +83,20 @@ export const recoverFailedMigration = async (userId: string): Promise<boolean> =
   } catch (error) {
     console.error('Error recovering failed migration:', error);
     return false;
+  }
+};
+
+/**
+ * Load the migrated user assessment data
+ * @returns The user's assessment data or null if not found
+ */
+export const loadUserAssessmentData = (): { userId: string, data: AssessmentData } | null => {
+  try {
+    const storedData = localStorage.getItem('userAssessment');
+    if (!storedData) return null;
+    return JSON.parse(storedData);
+  } catch (error) {
+    console.error('Error loading user assessment data:', error);
+    return null;
   }
 }; 

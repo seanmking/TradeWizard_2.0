@@ -1,0 +1,280 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  labels:
+    app: redis-cluster
+    component: cache
+spec:
+  serviceName: redis-cluster-headless
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+        component: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.0-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          if [ "$(hostname)" == "redis-cluster-0" ]; then
+            # Master initialization
+            redis-server --cluster-enabled yes --cluster-config-file /data/nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0
+          else
+            # Wait for master to be ready
+            until ping -c 1 redis-cluster-0.redis-cluster-headless; do
+              echo "Waiting for master to be available..."
+              sleep 1
+            done
+            # Join cluster
+            redis-server --cluster-enabled yes --cluster-config-file /data/nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0
+          fi
+        ports:
+        - containerPort: 6379
+          name: client
+        - containerPort: 16379
+          name: gossip
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis
+        - name: redis-cluster-init
+          mountPath: /scripts
+      # Initialize the cluster after all pods are ready
+      initContainers:
+      - name: config-init
+        image: redis:7.0-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Configuring Redis Cluster settings..."
+          cp /tmp/redis.conf /etc/redis/redis.conf
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis
+        - name: config-map
+          mountPath: /tmp
+      # Redis exporter for Prometheus metrics
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.43.0
+        ports:
+        - containerPort: 9121
+          name: metrics
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 200m
+            memory: 200Mi
+      volumes:
+      - name: redis-config
+        emptyDir: {}
+      - name: redis-cluster-init
+        configMap:
+          name: redis-cluster-init
+          defaultMode: 0755
+      - name: config-map
+        configMap:
+          name: redis-cluster-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - redis-cluster
+              topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 10
+            preference:
+              matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                - highio-instance-type  # This should match node labels for SSD-backed nodes
+  # PVC template for persistent storage
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "ssd-storage-class"  # High-performance storage class
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  labels:
+    app: redis-cluster
+    component: cache
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+  selector:
+    app: redis-cluster
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-headless
+  labels:
+    app: redis-cluster
+    component: cache
+spec:
+  clusterIP: None
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+  - port: 16379
+    targetPort: 16379
+    name: gossip
+  selector:
+    app: redis-cluster
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-config
+data:
+  redis.conf: |
+    cluster-enabled yes
+    cluster-require-full-coverage no
+    cluster-node-timeout 5000
+    cluster-migration-barrier 1
+    cluster-config-file /data/nodes.conf
+    appendonly yes
+    protected-mode no
+    bind 0.0.0.0
+    port 6379
+    timeout 0
+    tcp-keepalive 300
+    
+    # Redis performance tuning
+    maxmemory 3gb
+    maxmemory-policy allkeys-lru
+    
+    # Logging configuration
+    logfile ""
+    loglevel notice
+    
+    # Security settings
+    requirepass ${REDIS_PASSWORD}
+    masterauth ${REDIS_PASSWORD}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-init
+data:
+  cluster-init.sh: |
+    #!/bin/sh
+    
+    # Wait until all Redis nodes are ready
+    for i in $(seq 0 5); do
+      until ping -c 1 redis-cluster-$i.redis-cluster-headless; do
+        echo "Waiting for redis-cluster-$i to be available..."
+        sleep 2
+      done
+    done
+    
+    echo "All Redis nodes are ready. Initializing cluster..."
+    
+    # Create the cluster with 3 masters and 3 replicas
+    redis-cli --cluster create \
+      $(hostname -i):6379 \
+      redis-cluster-1.redis-cluster-headless:6379 \
+      redis-cluster-2.redis-cluster-headless:6379 \
+      redis-cluster-3.redis-cluster-headless:6379 \
+      redis-cluster-4.redis-cluster-headless:6379 \
+      redis-cluster-5.redis-cluster-headless:6379 \
+      --cluster-replicas 1 \
+      --cluster-yes
+    
+    echo "Redis Cluster initialization completed"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  labels:
+    app: redis-cluster
+    component: init
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+        component: init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: cluster-init
+        image: redis:7.0-alpine
+        command:
+        - /bin/sh
+        - /scripts/cluster-init.sh
+        volumeMounts:
+        - name: redis-cluster-init
+          mountPath: /scripts
+      volumes:
+      - name: redis-cluster-init
+        configMap:
+          name: redis-cluster-init
+          defaultMode: 0755
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis-cluster
+  labels:
+    app: redis-cluster
+    release: prometheus-operator
+spec:
+  selector:
+    matchLabels:
+      app: redis-cluster
+  endpoints:
+  - port: metrics
+    interval: 30s 

@@ -1,6 +1,126 @@
-# TradeWizard 2.0
+# TradeWizard 2.0 - Enhanced AI Cost Optimization
 
-An AI-powered export readiness platform designed to help South African SMEs navigate international trade successfully.
+This project implements an enhanced hybrid model selector with cost-saving measures for the TradeWizard application. The system intelligently selects the most appropriate AI model based on task complexity and implements various cost optimization strategies.
+
+## Key Components
+
+### 1. Hybrid Model Selector
+
+The model selector dynamically chooses the most appropriate AI model based on:
+- Task type (regulatory analysis, market research, etc.)
+- Content complexity (determined by analyzing website content)
+- User preferences and requirements
+
+### 2. Redis Caching Layer
+
+A Redis-based caching system that:
+- Stores responses with configurable TTL based on data type
+- Provides significant cost savings by avoiding redundant API calls
+- Tracks cache performance metrics (hit rate, cost savings)
+
+### 3. Dynamic Prompt Generation
+
+A system that:
+- Creates optimized prompts based on industry and query type
+- Reduces token usage while maintaining response quality
+- Adapts to different use cases with specialized templates
+
+### 4. Web Scraper Integration
+
+A web scraper that:
+- Analyzes website content to determine complexity
+- Helps select the appropriate model based on content characteristics
+- Identifies content type for appropriate caching strategies
+
+### 5. Cost Monitoring Dashboard
+
+An admin dashboard that:
+- Displays real-time cost metrics and savings
+- Breaks down usage by model and task type
+- Identifies cost anomalies and trends
+- Shows cache performance statistics
+
+## Implementation Details
+
+### Model Selection Logic
+
+The system uses a sophisticated algorithm to select the most appropriate model:
+- Low complexity tasks use more efficient models (e.g., GPT-3.5 Turbo)
+- High complexity tasks use more capable models (e.g., GPT-4)
+- Website content analysis influences model selection
+
+### Caching Strategy
+
+The Redis cache implements different TTL (Time-To-Live) values based on data type:
+- Regulatory data: 24 hours
+- Market trends: 7 days
+- Country profiles: 30 days
+- Product information: 14 days
+
+### Cost Savings Calculation
+
+The system tracks cost savings from:
+1. Model selection (using cheaper models when appropriate)
+2. Caching (avoiding redundant API calls)
+3. Prompt optimization (reducing token usage)
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- Redis server
+- Next.js
+
+### Installation
+
+1. Clone the repository
+2. Install dependencies:
+   ```
+   npm install
+   ```
+3. Set up environment variables:
+   ```
+   REDIS_URL=redis://localhost:6379
+   OPENAI_API_KEY=your_api_key
+   ```
+4. Run the development server:
+   ```
+   npm run dev
+   ```
+
+### Usage
+
+The system is integrated into the main AI service and can be used through:
+
+```typescript
+import { processOptimizedQuery } from './app/lib/services/ai/integration';
+
+// Process a query with cost optimization
+const result = await processOptimizedQuery(
+  "What are the export regulations for medical devices to Germany?",
+  "regulatory_analysis",
+  "https://example.com/medical-device-regulations"
+);
+
+console.log(`Response: ${result.response}`);
+console.log(`Cost savings: $${result.costSavings.toFixed(4)}`);
+```
+
+## Dashboard
+
+Access the cost monitoring dashboard at `/admin/cost-monitoring` to view:
+- Total costs and tokens used
+- Usage breakdown by model and task type
+- Cache performance metrics
+- Cost anomaly alerts
+
+## Future Enhancements
+
+- Integration with more AI models for greater flexibility
+- Machine learning-based model selection
+- Advanced content analysis for better complexity determination
+- Predictive caching for frequently requested information
 
 ## Project Overview
 
@@ -18,32 +138,6 @@ TradeWizard follows a three-layer architecture:
 1. **AI Agent** - Handles user interactions and generates personalized insights
 2. **MCP (Middleware Component Providers)** - Processes structured data from multiple sources
 3. **Database** - Stores user data, export progress, and cached intelligence
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn
-- Docker (for local development)
-- Supabase account
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/your-org/tradewizard.git
-
-# Install dependencies
-cd tradewizard
-npm install
-
-# Set up environment variables
-cp .env.example .env.local
-
-# Start development server
-npm run dev
-```
 
 ## Development Guidelines
 
@@ -88,4 +182,3 @@ tradewizard/
 ## License
 
 This project is proprietary and confidential. Unauthorized use, reproduction, or distribution is prohibited.
-# TradeWizard_2.0

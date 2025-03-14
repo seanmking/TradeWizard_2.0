@@ -5,6 +5,8 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import complianceMcpRoutes from './mcp/compliance-mcp';
+// Import routes from app.js
+import * as path from 'path';
 
 dotenv.config();
 
@@ -21,6 +23,12 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json());
+
+// Import the tradeRoutes from the app.js file
+const tradeRoutes = require('./routes/tradeRoutes');
+
+// Register trade routes
+app.use('/api/trade', tradeRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: Request, res: Response) => {

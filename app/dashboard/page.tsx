@@ -1,9 +1,18 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { loadUserAssessmentData } from '../lib/services/transitionService';
 
 export default function DashboardPage() {
+  const [hasAssessment, setHasAssessment] = useState(false);
+  
+  useEffect(() => {
+    // Check if there's user assessment data
+    const userData = loadUserAssessmentData();
+    setHasAssessment(!!userData);
+  }, []);
+  
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow">
@@ -24,18 +33,22 @@ export default function DashboardPage() {
           </div>
           <div className="border-t border-gray-200 px-4 py-5 sm:p-6">
             <p className="text-gray-700 mb-4">
-              Thank you for creating your account! Your export readiness assessment has been successfully associated with your profile.
+              {hasAssessment 
+                ? "Thank you for creating your account! Your export readiness assessment has been successfully associated with your profile."
+                : "Get started by completing your export readiness assessment."}
             </p>
             
             <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
               <div className="bg-blue-50 p-6 rounded-lg">
                 <h3 className="text-lg font-medium text-blue-800 mb-2">Your Export Readiness</h3>
                 <p className="text-blue-700 mb-4">
-                  View your complete assessment results and get personalized recommendations.
+                  {hasAssessment 
+                    ? "View your complete assessment results and get personalized recommendations."
+                    : "Take our assessment to evaluate your export readiness and get personalized recommendations."}
                 </p>
-                <Link href="/assessment-results">
+                <Link href={hasAssessment ? "/assessment-results" : "/assessment"}>
                   <span className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                    View Full Results
+                    {hasAssessment ? "View Full Results" : "Start Assessment"}
                   </span>
                 </Link>
               </div>

@@ -68,8 +68,8 @@ export const assessmentQuestions: AssessmentQuestion[] = [
     id: 'intro',
     prompt: "Hi there! I'm Sarah, your export readiness advisor. To personalize your assessment, could you tell me your name, role, and business name?",
     extraction_patterns: {
-      first_name: /(?:my name is|i'm|im|i am|name is|hi|hello|hey|this is|i'm called)\s+([a-zA-Z]+)/i,
-      last_name: /([a-zA-Z]+)(?:\s+and|\s+at|\s+from|\s+of|\s*$)/i,
+      first_name: /(?:my name is|i'm|im|i am|name is|this is)\s+([A-Z][a-z]+)(?:\s+[A-Z][a-z]+)*|\b([A-Z][a-z]+)\b(?=\s+[A-Z][a-z]+(?:\s+and|\s+with|\s+at|\s+from|\s+of|\s*$))/i,
+      last_name: /(?:my name is|i'm|im|i am|name is|this is)\s+[A-Z][a-z]+\s+([A-Z][a-z]+)|\b[A-Z][a-z]+\s+([A-Z][a-z]+)\b(?:\s+and|\s+at|\s+from|\s+with|\s+of|\s*$)/i,
       role: /(?:(?:i'm|im|i am)(?: a| the)? ([^,.]+? (?:at|in|of|for)))/i,
       business_name: /(?:(?:at|for|from|with|of) ([\w\s&\-\.]+))/i,
     },
@@ -121,7 +121,7 @@ export const assessmentQuestions: AssessmentQuestion[] = [
   },
   {
     id: 'motivation',
-    prompt: "Finally, what's your primary motivation for exploring export opportunities?",
+    prompt: "What's your primary motivation for exploring export opportunities?",
     extraction_patterns: {
       export_motivation: /(.*)/i, // Capture the entire response
     },
@@ -130,6 +130,22 @@ export const assessmentQuestions: AssessmentQuestion[] = [
         return { 
           valid: false, 
           message: "Understanding your motivation helps me provide better recommendations. Could you share a bit more?" 
+        };
+      }
+      return { valid: true };
+    }
+  },
+  {
+    id: 'target_markets',
+    prompt: "Which specific international markets are you interested in exporting to? We currently specialize in UAE, USA, and UK.",
+    extraction_patterns: {
+      target_markets: /(.*)/i, // Capture the entire response
+    },
+    validation: (input: string) => {
+      if (input.length < 3) {
+        return { 
+          valid: false, 
+          message: "Please let me know which markets you're interested in, even if they're not on our supported list." 
         };
       }
       return { valid: true };
@@ -159,20 +175,40 @@ export const extractDataFromResponse = (
 ): Record<string, string> => {
   const extractedData: Record<string, string> = {};
   
+  // First, clean input by filtering out potential confusion with AI names
+  // Filter out references to the AI assistant to avoid name extraction confusion
+  const cleanedInput = input.replace(/\b(?:sarah|hi sarah|hello sarah|thanks sarah)\b/i, '').trim();
+  
   // Apply each pattern and extract data
   Object.entries(patterns).forEach(([key, pattern]) => {
-    const match = input.match(pattern);
-    if (match && match[1]) {
-      extractedData[key] = match[1].trim();
+    const match = cleanedInput.match(pattern);
+    if (match) {
+      // Find the first non-undefined capturing group
+      for (let i = 1; i < match.length; i++) {
+        if (match[i]) {
+          extractedData[key] = match[i].trim();
+          break;
+        }
+      }
     }
   });
   
-  // If we're looking for a first_name but didn't find one, try a simpler approach
+  // If we're looking for first_name and last_name but didn't find them,
+  // try a more general name extraction approach
   if (patterns.hasOwnProperty('first_name') && !extractedData['first_name']) {
-    // Try to extract the first word assuming it might be a name
-    const firstWord = input.trim().split(/\s+/)[0];
-    if (firstWord && firstWord.length > 1) {
-      extractedData['first_name'] = firstWord;
+    // Look for capitalized words that might be names
+    const nameMatch = cleanedInput.match(/\b([A-Z][a-z]+)(?:\s+([A-Z][a-z]+))?\b/);
+    if (nameMatch && nameMatch[1]) {
+      // Check that this isn't a common word that might be capitalized at start of sentence
+      const commonWords = ['hi', 'hello', 'yes', 'no', 'thanks', 'thank', 'sarah'];
+      if (!commonWords.includes(nameMatch[1].toLowerCase())) {
+        extractedData['first_name'] = nameMatch[1];
+        
+        // If there's a second capitalized word, it might be a last name
+        if (nameMatch[2] && !extractedData['last_name']) {
+          extractedData['last_name'] = nameMatch[2];
+        }
+      }
     }
   }
   
@@ -185,8 +221,12 @@ export const extractDataFromResponse = (
 export const formatPrompt = (prompt: string, data: AssessmentData): string => {
   let formattedPrompt = prompt;
   
+  console.log("Format prompt input:", prompt);
+  console.log("Format prompt data:", data);
+  
   // Special case: replace "name" with first_name if it exists in the prompt
   if (data.first_name) {
+    console.log("Replacing {name} with:", data.first_name);
     formattedPrompt = formattedPrompt.replace(/\{name\}/g, data.first_name);
     formattedPrompt = formattedPrompt.replace(/Thanks name!/g, `Thanks ${data.first_name}!`);
   }
@@ -195,10 +235,14 @@ export const formatPrompt = (prompt: string, data: AssessmentData): string => {
   Object.entries(data).forEach(([key, value]) => {
     if (value) {
       const placeholder = new RegExp(`\\{${key}\\}`, 'g');
+      if (formattedPrompt.match(placeholder)) {
+        console.log(`Replacing {${key}} with:`, value);
+      }
       formattedPrompt = formattedPrompt.replace(placeholder, value);
     }
   });
   
+  console.log("Final formatted prompt:", formattedPrompt);
   return formattedPrompt;
 };
 

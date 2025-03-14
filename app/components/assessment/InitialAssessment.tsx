@@ -16,21 +16,72 @@ import {
 } from '../../lib/services/assessmentService';
 
 // Add a fallback for server-only content
-const FALLBACK_QUESTIONS = [
+const FALLBACK_QUESTIONS: AssessmentQuestion[] = [
   {
     id: 'introduction',
     prompt: "Hi there! I'm Sarah, your export readiness advisor. Could you tell me your name, role, and business name?",
     extraction_patterns: {
-      first_name: /(?:my name is|i'm|im|i am|name is|hi|hello|hey|this is|i'm called)\s+([a-zA-Z]+)/i,
+      first_name: /(?:my name is|i'm|im|i am|name is|this is)\s+([A-Z][a-z]+)(?:\s+[A-Z][a-z]+)*|\b([A-Z][a-z]+)\b(?=\s+[A-Z][a-z]+(?:\s+and|\s+with|\s+at|\s+from|\s+of|\s*$))/i,
       business_name: /(?:(?:at|for|from|with|of) ([\w\s&\-\.]+))/i,
       role: /(?:(?:i'm|im|i am)(?: a| the)? ([^,.]+? (?:at|in|of|for)))/i
+    },
+    validation: (input: string) => {
+      if (input.length < 5) {
+        return { valid: false, message: "Please provide a bit more information so I can get to know you better." };
+      }
+      return { valid: true };
     }
   },
   {
     id: 'website_analysis',
-    prompt: "Thanks {{first_name}}! Do you have a website for {{business_name}}? If yes, please share the URL.",
+    prompt: "Thanks {first_name}! Do you have a website for {business_name}? If yes, please share the URL.",
     extraction_patterns: {
       website_url: /(https?:\/\/[^\s]+)/g
+    },
+    validation: (input: string) => {
+      if (input.length < 3) {
+        return { valid: false, message: "Please provide a valid website URL or let me know if you don't have one." };
+      }
+      return { valid: true };
+    }
+  },
+  {
+    id: 'export_experience',
+    prompt: "Great! Now, could you tell me about your previous export experience, if any?",
+    extraction_patterns: {
+      export_experience: /(.*)/i
+    },
+    validation: (input: string) => {
+      if (input.length < 3) {
+        return { valid: false, message: "Could you provide a bit more detail about your export experience?" };
+      }
+      return { valid: true };
+    }
+  },
+  {
+    id: 'motivation',
+    prompt: "What's your primary motivation for exploring export opportunities?",
+    extraction_patterns: {
+      export_motivation: /(.*)/i
+    },
+    validation: (input: string) => {
+      if (input.length < 5) {
+        return { valid: false, message: "Understanding your motivation helps me provide better recommendations. Could you share a bit more?" };
+      }
+      return { valid: true };
+    }
+  },
+  {
+    id: 'target_markets',
+    prompt: "Which specific international markets are you interested in exporting to? We currently specialize in UAE, USA, and UK.",
+    extraction_patterns: {
+      target_markets: /(.*)/i
+    },
+    validation: (input: string) => {
+      if (input.length < 3) {
+        return { valid: false, message: "Please let me know which markets you're interested in, even if they're not on our supported list." };
+      }
+      return { valid: true };
     }
   }
 ];
@@ -68,6 +119,7 @@ const InitialAssessment: React.FC = () => {
     website_url: '',
     export_experience: '',
     export_motivation: '',
+    target_markets: '',
   });
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -118,11 +170,20 @@ const InitialAssessment: React.FC = () => {
       // Extract data from the response
       const extractedData = extractDataFromResponse(userInput, currentQuestion.extraction_patterns);
       
+      // Debug: Log extracted data
+      console.log('Extracted data:', extractedData);
+      console.log('Current user responses:', userResponses);
+      
       // Update user responses
       setUserResponses(prev => ({
         ...prev,
         ...extractedData,
       }));
+      
+      // Debug: Log updated user responses
+      setTimeout(() => {
+        console.log('Updated user responses:', userResponses);
+      }, 0);
       
       // Show typing indicator
       setIsTyping(true);
@@ -135,11 +196,20 @@ const InitialAssessment: React.FC = () => {
         if (nextStepIndex < questions.length) {
           const nextQuestion = questions[nextStepIndex];
           
-          // Format the prompt with user data if needed
-          const formattedPrompt = formatPrompt(nextQuestion.prompt, {
+          // Create the complete data for formatting
+          const formattingData = {
             ...userResponses,
             ...extractedData,
-          });
+          };
+          
+          // Debug: Log prompt data
+          console.log('Formatting prompt with data:', formattingData);
+          
+          // Format the prompt with user data if needed
+          const formattedPrompt = formatPrompt(nextQuestion.prompt, formattingData);
+          
+          // Debug: Log formatted prompt
+          console.log('Formatted prompt:', formattedPrompt);
           
           // Add assistant response
           const assistantMessage: Message = {

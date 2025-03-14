@@ -1,4 +1,7 @@
 import OpenAI from 'openai';
+import { ExponentialBackoff } from './utils/backoff';
+import costMonitoringService, { estimateTokenCount } from './cost-monitoring';
+import { QueryCache } from './utils/query-cache';
 
 // Environment variable types
 declare global {
@@ -19,6 +22,7 @@ export interface OpenAIServiceOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number; // Add timeout option
 }
 
 // Define task complexity levels for model selection
@@ -70,11 +74,35 @@ export interface ModelSelectionConfig {
   crossReferenceTerms: string[];
 }
 
+// Custom error classes for better error handling
+export class OpenAIServiceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpenAIServiceError';
+  }
+}
+
+export class OpenAIRateLimitError extends OpenAIServiceError {
+  constructor(message: string = 'Rate limit exceeded') {
+    super(message);
+    this.name = 'OpenAIRateLimitError';
+  }
+}
+
+export class OpenAITimeoutError extends OpenAIServiceError {
+  constructor(message: string = 'Request timed out') {
+    super(message);
+    this.name = 'OpenAITimeoutError';
+  }
+}
+
 class OpenAIService {
   private openai: OpenAI;
   private defaultOptions: OpenAIServiceOptions;
   private config: ModelSelectionConfig;
-
+  private queryCache: QueryCache<string>;
+  private maxRetries = 3;
+  
   constructor() {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
@@ -84,7 +112,11 @@ class OpenAIService {
       model: 'gpt-3.5-turbo', // Default to cheaper model
       temperature: 0.7,
       maxTokens: 1000,
+      timeoutMs: 30000, // 30 second default timeout
     };
+    
+    // Initialize the query cache with a 1-hour TTL
+    this.queryCache = new QueryCache<string>(60 * 60 * 1000);
     
     // Default configuration for model selection
     this.config = {
@@ -181,11 +213,17 @@ class OpenAIService {
     
     // Score based on industry terminology
     let industryTermCount = 0;
-    this.config.industryTerms.forEach(term => {
-      if (query.toLowerCase().includes(term.toLowerCase())) {
+    const lowerQuery = query.toLowerCase();
+    
+    for (const term of this.config.industryTerms) {
+      if (lowerQuery.includes(term.toLowerCase())) {
         industryTermCount++;
+        // Break early if we've already reached the high threshold
+        if (industryTermCount >= this.config.complexityThresholds.industryTermCount.high) {
+          break;
+        }
       }
-    });
+    }
     
     if (industryTermCount >= this.config.complexityThresholds.industryTermCount.high) {
       complexityScore += 2;
@@ -195,11 +233,16 @@ class OpenAIService {
     
     // Score based on cross-reference terms
     let crossReferenceTermCount = 0;
-    this.config.crossReferenceTerms.forEach(term => {
-      if (query.toLowerCase().includes(term.toLowerCase())) {
+    
+    for (const term of this.config.crossReferenceTerms) {
+      if (lowerQuery.includes(term.toLowerCase())) {
         crossReferenceTermCount++;
+        // Break early if we've already reached the threshold
+        if (crossReferenceTermCount >= this.config.complexityThresholds.crossReferenceThreshold) {
+          break;
+        }
       }
-    });
+    }
     
     if (crossReferenceTermCount >= this.config.complexityThresholds.crossReferenceThreshold) {
       complexityScore += 2;
@@ -216,32 +259,27 @@ class OpenAIService {
   }
 
   /**
-   * Select the appropriate model based on task complexity and data availability
+   * Select the appropriate model based on task type
+   * Simplified implementation that defaults to GPT-3.5-Turbo
+   * @param taskType - The type of task being performed
+   * @returns The name of the model to use
    */
   selectModelForTask(
     taskType: TaskType,
-    userQuery: string = '',
+    queryContent: string = '',
     hasStructuredData: boolean = false
   ): string {
-    // 1. Check for task type overrides first
-    if (this.config.taskTypeOverrides[taskType]) {
-      return this.config.taskTypeOverrides[taskType]!;
+    // Default to GPT-3.5-Turbo for most tasks
+    const defaultModel = 'gpt-3.5-turbo';
+    
+    // Only use GPT-4 for specific complex tasks
+    // No matter the complexity or structured data availability
+    if (taskType === 'website_analysis' || taskType === 'summary') {
+      return 'gpt-4';
     }
     
-    // 2. If structured data is available, we can often use a less powerful model
-    if (hasStructuredData) {
-      // Even with structured data, some tasks still need GPT-4
-      if (taskType === 'summary') {
-        return this.config.modelMapping.high;
-      }
-      
-      // Most other tasks can use GPT-3.5 when structured data is available
-      return this.config.modelMapping.medium;
-    }
-    
-    // 3. For regular cases, detect complexity and select model accordingly
-    const complexity = this.detectComplexity(userQuery, taskType);
-    return this.config.modelMapping[complexity];
+    // For all other tasks, use GPT-3.5-Turbo
+    return defaultModel;
   }
 
   /**
@@ -266,61 +304,205 @@ class OpenAIService {
     }
   }
 
-  // Get a completion from the OpenAI API
+  // Generate a cache key for a completion request
+  private generateCacheKey(
+    messages: OpenAIMessage[],
+    options: OpenAIServiceOptions,
+    taskType?: TaskType
+  ): string {
+    // Create a simple hash of the messages and options
+    const messagesStr = JSON.stringify(messages);
+    const optionsStr = JSON.stringify(options);
+    const taskTypeStr = taskType || 'unknown';
+    
+    return `${messagesStr}|${optionsStr}|${taskTypeStr}`;
+  }
+
+  /**
+   * Get a completion from OpenAI API with appropriate model selection
+   */
   async getCompletion(
     messages: OpenAIMessage[],
-    options?: Partial<OpenAIServiceOptions>,
-    taskType?: TaskType,
-    hasStructuredData: boolean = false
+    options: OpenAIServiceOptions = {},
+    taskType: TaskType = 'clarification',
+    hasStructuredData: boolean = false,
+    userId?: string
   ): Promise<string> {
-    try {
-      // Start with default options
-      const mergedOptions = { ...this.defaultOptions, ...options };
-      
-      // Extract the most recent user query for complexity detection
-      let userQuery = '';
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'user') {
-          userQuery = messages[i].content;
-          break;
-        }
+    // Set default options
+    const modelOptions: OpenAIServiceOptions = {
+      model: options.model || this.selectModelForTask(taskType, messages[messages.length - 1]?.content || '', hasStructuredData),
+      temperature: options.temperature ?? 0.7,
+      maxTokens: options.maxTokens,
+      timeoutMs: options.timeoutMs || 30000 // 30 seconds default timeout
+    };
+    
+    // Extract the most recent user query for complexity detection
+    let userQuery = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userQuery = messages[i].content;
+        break;
       }
-      
-      // Override model based on task if provided
-      if (taskType) {
-        mergedOptions.model = this.selectModelForTask(taskType, userQuery, hasStructuredData);
-      }
-      
-      // Pre-process messages to reduce tokens if needed
-      const processedMessages = this.optimizeMessages(messages);
-      
-      console.log(`Using model ${mergedOptions.model} for task type: ${taskType || 'unspecified'}`);
-      console.log(`Query complexity: ${taskType ? this.detectComplexity(userQuery, taskType) : 'unspecified'}`);
-      
-      const response = await this.openai.chat.completions.create({
-        model: mergedOptions.model!,
-        messages: processedMessages,
-        temperature: mergedOptions.temperature,
-        max_tokens: mergedOptions.maxTokens,
-      });
-
-      if (!response.choices[0].message?.content) {
-        throw new Error('No response from OpenAI');
-      }
-
-      return response.choices[0].message.content;
-    } catch (error) {
-      console.error('Error calling OpenAI:', error);
-      
-      // If using GPT-4 and it failed, fallback to GPT-3.5
-      if (options?.model?.includes('gpt-4') && error instanceof Error) {
-        console.log('Falling back to GPT-3.5 after GPT-4 failure');
-        const fallbackOptions = { ...options, model: 'gpt-3.5-turbo' };
-        return this.getCompletion(messages, fallbackOptions);
-      }
-      
-      throw error;
     }
+    
+    // Pre-process messages to reduce tokens if needed
+    const processedMessages = this.optimizeMessages(messages);
+    
+    // Generate cache key
+    const cacheKey = this.generateCacheKey(processedMessages, modelOptions, taskType);
+    
+    // Check if we have a cached response
+    const cachedResponse = this.queryCache.get(cacheKey);
+    if (cachedResponse) {
+      console.log(`Using cached response for ${taskType || 'unspecified'} task`);
+      
+      // Record the usage from the cache to track savings
+      const estimatedPromptTokens = processedMessages.reduce(
+        (total, msg) => total + estimateTokenCount(msg.content),
+        0
+      );
+      
+      const estimatedCompletionTokens = estimateTokenCount(cachedResponse);
+      
+      // Record the usage with zero response time (cached)
+      if (taskType) {
+        costMonitoringService.recordUsage(
+          modelOptions.model!,
+          taskType,
+          {
+            promptTokens: estimatedPromptTokens,
+            completionTokens: estimatedCompletionTokens,
+            totalTokens: estimatedPromptTokens + estimatedCompletionTokens
+          },
+          userId,
+          0 // Zero response time for cached responses
+        );
+      }
+      
+      return cachedResponse;
+    }
+    
+    console.log(`Using model ${modelOptions.model} for task type: ${taskType || 'unspecified'}`);
+    if (taskType) {
+      console.log(`Query complexity: ${this.detectComplexity(userQuery, taskType)}`);
+    }
+    
+    // Set up retry logic with exponential backoff
+    const backoff = new ExponentialBackoff({
+      initialDelay: 1000,
+      maxDelay: 10000,
+      factor: 2,
+    });
+    
+    let attempts = 0;
+    let requestStartTime = Date.now();
+    
+    while (attempts < this.maxRetries) {
+      try {
+        attempts++;
+        
+        // Create a promise that will reject on timeout
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new OpenAITimeoutError(`Request timed out after ${modelOptions.timeoutMs}ms`));
+          }, modelOptions.timeoutMs);
+        });
+        
+        // Race the actual API call against the timeout
+        const responsePromise = this.openai.chat.completions.create({
+          model: modelOptions.model!,
+          messages: processedMessages,
+          temperature: modelOptions.temperature,
+          max_tokens: modelOptions.maxTokens,
+        });
+        
+        const response = await Promise.race([responsePromise, timeoutPromise]);
+        
+        if (!response.choices[0].message?.content) {
+          throw new OpenAIServiceError('No response content from OpenAI');
+        }
+        
+        const responseContent = response.choices[0].message.content;
+        const responseTime = Date.now() - requestStartTime;
+        
+        // Cache the successful response
+        this.queryCache.set(cacheKey, responseContent);
+        
+        // Record the usage
+        if (taskType) {
+          costMonitoringService.recordUsage(
+            modelOptions.model!,
+            taskType,
+            {
+              promptTokens: response.usage?.prompt_tokens || estimateTokenCount(JSON.stringify(processedMessages)),
+              completionTokens: response.usage?.completion_tokens || estimateTokenCount(responseContent),
+              totalTokens: response.usage?.total_tokens || (
+                estimateTokenCount(JSON.stringify(processedMessages)) + 
+                estimateTokenCount(responseContent)
+              )
+            },
+            userId,
+            responseTime
+          );
+        }
+        
+        return responseContent;
+        
+      } catch (error: any) {
+        console.error(`Error calling OpenAI (attempt ${attempts}/${this.maxRetries}):`, error);
+        
+        // Handle rate limiting
+        if (error.status === 429) {
+          if (attempts < this.maxRetries) {
+            const delayMs = backoff.nextDelay();
+            console.log(`Rate limited. Retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          } else {
+            throw new OpenAIRateLimitError('Rate limit exceeded after maximum retries');
+          }
+        }
+        
+        // Handle timeouts
+        if (error instanceof OpenAITimeoutError) {
+          if (attempts < this.maxRetries) {
+            console.log(`Request timed out. Retrying...`);
+            continue;
+          } else {
+            // Final fallback to cheaper model on timeout
+            if (modelOptions.model?.includes('gpt-4')) {
+              console.log('All retries timed out. Falling back to GPT-3.5 Turbo');
+              const fallbackOptions = { ...modelOptions, model: 'gpt-3.5-turbo' };
+              return this.getCompletion(messages, fallbackOptions, taskType, hasStructuredData, userId);
+            }
+            throw error;
+          }
+        }
+        
+        // For server errors (5xx), retry with backoff
+        if (error.status >= 500 && error.status < 600) {
+          if (attempts < this.maxRetries) {
+            const delayMs = backoff.nextDelay();
+            console.log(`Server error (${error.status}). Retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
+        }
+        
+        // If using GPT-4 and it failed for any other reason, fallback to GPT-3.5
+        if (modelOptions.model?.includes('gpt-4')) {
+          console.log('Falling back to GPT-3.5 after GPT-4 failure');
+          const fallbackOptions = { ...modelOptions, model: 'gpt-3.5-turbo' };
+          return this.getCompletion(messages, fallbackOptions, taskType, hasStructuredData, userId);
+        }
+        
+        // Re-throw the error if we can't handle it
+        throw error;
+      }
+    }
+    
+    // This should not be reached due to the retry logic, but just in case
+    throw new OpenAIServiceError('Failed to get completion after maximum retries');
   }
   
   // Optimize messages to reduce token usage

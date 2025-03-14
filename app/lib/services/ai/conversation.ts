@@ -171,6 +171,14 @@ export class ConversationManager {
   }
   
   /**
+   * Alias for getConversation for more explicit naming
+   * Gets an existing conversation or creates a new one if it doesn't exist
+   */
+  getOrCreateConversation(userId: string): Conversation {
+    return this.getConversation(userId);
+  }
+  
+  /**
    * Reset a user's conversation
    */
   resetConversation(userId: string): void {

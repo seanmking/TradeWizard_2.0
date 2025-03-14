@@ -1,5 +1,15 @@
+/**
+ * AI Service Module
+ * 
+ * This module provides AI-powered assessment and analysis capabilities.
+ * It uses a cost-effective approach by using GPT-3.5 for most tasks
+ * and GPT-4 only for complex analyses that require enhanced capabilities.
+ */
 export { default as openAIService } from './openai-service';
+export { default as modelSelector, selectModelForTask } from './model-selector';
+export { default as costMonitoringService, estimateTokenCount, MODEL_COSTS } from './cost-monitoring';
 export type { OpenAIMessage, OpenAIServiceOptions, TaskType, ModelSelectionConfig, TaskComplexity } from './openai-service';
+export { OpenAIServiceError, OpenAIRateLimitError, OpenAITimeoutError } from './openai-service';
 export { Conversation, ConversationManager } from './conversation';
 export type { ConversationContext } from './conversation';
 export { 
@@ -10,9 +20,18 @@ export {
   FIXED_PROMPTS
 } from './prompt-templates';
 
+// Utility exports
+export { ExponentialBackoff } from './utils/backoff';
+export type { BackoffOptions } from './utils/backoff';
+export { QueryCache } from './utils/query-cache';
+export { RedisCacheService, redisCacheService } from './utils';
+export type { TTLConfig } from './utils';
+export { PromptGenerator, promptGenerator } from './utils';
+export type { PromptType, Industry, PromptTemplate } from './utils';
+
 // Create a convenient AI Assessment service
 import openAIService, { TaskType } from './openai-service';
-import { ConversationManager, ConversationContext } from './conversation';
+import { ConversationManager, ConversationContext, Conversation } from './conversation';
 import { 
   DEFAULT_SYSTEM_PROMPT, 
   getAssessmentPrompt, 
@@ -20,10 +39,14 @@ import {
   ASSESSMENT_STAGES,
   FIXED_PROMPTS
 } from './prompt-templates';
+import { estimateTokenCount, MODEL_COSTS } from './cost-monitoring';
 
 // Import MCP service
 import { WebsiteAnalysisResult } from '../mcp';
 import { analyzeWebsite as mcpAnalyzeWebsite } from '../mcp/actions';
+
+// Import cost monitoring
+import costMonitoringService from './cost-monitoring';
 
 class AIAssessmentService {
   // Changed from private to public to allow access from assessmentService
@@ -58,215 +81,185 @@ class AIAssessmentService {
     message: string, 
     stage: string,
     contextUpdate: Partial<ConversationContext> = {}
-  ): Promise<{response: string, nextStage: string, websiteAnalysis?: WebsiteAnalysisResult}> {
-    // Get the conversation for this user
-    const conversation = this.conversationManager.getConversation(userId);
+  ): Promise<{response: string, nextStage: string, websiteAnalysis?: WebsiteAnalysisResult, costSavings?: number}> {
+    // Get or create conversation
+    const conversation = this.conversationManager.getOrCreateConversation(userId);
     
-    // Update the context if new information is provided
+    // Add incoming message
+    conversation.addUserMessage(message);
+    
+    // Update context if needed
     if (Object.keys(contextUpdate).length > 0) {
       conversation.updateContext(contextUpdate);
     }
     
-    // Add the new user message
-    conversation.addUserMessage(message);
-    
-    // Get the current context
+    // Get current context
     const context = conversation.getContext();
     
-    // Store website analysis results to return
-    let websiteAnalysisResult: WebsiteAnalysisResult | undefined;
+    // Set current stage if not already set
+    if (!context.currentStage) {
+      context.currentStage = stage;
+      conversation.updateContext({ currentStage: stage });
+    }
     
-    // Flag to indicate if we have structured data
-    let hasStructuredData = false;
+    // Special case: initial website analysis via MCP
+    let websiteAnalysis: WebsiteAnalysisResult | undefined;
+    let costSavings: number | undefined;
     
-    // Special handling for website URL if we're in the website analysis stage
-    let website = '';
     if (stage === ASSESSMENT_STAGES.WEBSITE_ANALYSIS) {
-      // Extract website URL using regex
+      // Check if message contains a URL
       const urlRegex = /(https?:\/\/[^\s]+)/g;
-      const match = message.match(urlRegex);
+      const matches = message.match(urlRegex);
       
-      if (match && match[0]) {
-        website = match[0];
+      if (matches && matches.length > 0) {
+        const websiteUrl = matches[0];
+        console.log(`Detected website URL: ${websiteUrl}`);
         
-        // Update context with the website
-        conversation.updateContext({ website });
-        
-        // Call MCP to analyze website
         try {
-          console.log(`Website detected: ${website} - Triggering MCP analysis`);
-          websiteAnalysisResult = await mcpAnalyzeWebsite(website);
+          // Track start time for performance measurement
+          const startTime = Date.now();
           
-          // We now have structured data from the scraper
-          hasStructuredData = true;
+          // Perform website analysis using MCP
+          websiteAnalysis = await mcpAnalyzeWebsite(websiteUrl);
           
-          // Update the context with insights from website analysis
-          conversation.updateContext({
-            industry: websiteAnalysisResult.productCategories.join(', '),
-            additionalNotes: `Website analysis: Business appears to be ${websiteAnalysisResult.businessSize} sized, with certifications: ${websiteAnalysisResult.certifications.join(', ')}. Primarily serves ${websiteAnalysisResult.customerSegments.join(', ')} customers.`
+          // Update context with discovered website
+          conversation.updateContext({ 
+            website: websiteUrl,
+            currentStage: stage
           });
           
-          console.log(`Website analysis complete: Export readiness score from MCP: ${websiteAnalysisResult.exportReadiness}`);
+          // The website analysis data is structured data we can use
+          const hasStructuredData = true;
+          
+          // Generate prompt with structured data
+          const structuredPrompt = this.addStructuredDataToContext(
+            getAssessmentPrompt(stage, conversation.getContext()),
+            websiteAnalysis
+          );
+          
+          // Estimate tokens for GPT-4 vs GPT-3.5 to calculate savings
+          const estimatedPromptTokens = estimateTokenCount(structuredPrompt);
+          
+          // Select models for comparison - what we would have used without structured data
+          const fullAnalysisModel = 'gpt-4-turbo'; // The model we'd use without scraper
+          const optimizedModel = 'gpt-3.5-turbo'; // The model we use with structured data
+          
+          // Calculate the prompt cost difference
+          const gpt4PromptCost = (estimatedPromptTokens / 1000) * MODEL_COSTS['gpt-4-turbo'].promptRate;
+          const gpt35PromptCost = (estimatedPromptTokens / 1000) * MODEL_COSTS['gpt-3.5-turbo'].promptRate;
+          
+          // Generate AI response with structured data, using GPT-3.5 for cost savings
+          const taskType = openAIService.mapStageToTaskType(stage);
+          const aiResponse = await openAIService.getCompletion(
+            [
+              { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
+              { role: 'user', content: structuredPrompt }
+            ],
+            { model: optimizedModel }, // Force use of GPT-3.5 when we have structured data
+            taskType,
+            hasStructuredData,
+            userId // Pass userId for usage tracking
+          );
+          
+          // Estimate completion tokens
+          const estimatedCompletionTokens = estimateTokenCount(aiResponse);
+          
+          // Calculate completion cost difference
+          const gpt4CompletionCost = (estimatedCompletionTokens / 1000) * MODEL_COSTS['gpt-4-turbo'].completionRate;
+          const gpt35CompletionCost = (estimatedCompletionTokens / 1000) * MODEL_COSTS['gpt-3.5-turbo'].completionRate;
+          
+          // Total cost savings
+          costSavings = (gpt4PromptCost + gpt4CompletionCost) - (gpt35PromptCost + gpt35CompletionCost);
+          
+          // Record the performance gain
+          const processingTime = Date.now() - startTime;
+          console.log(`Website analysis processing time: ${processingTime}ms`);
+          console.log(`Estimated cost savings: $${costSavings.toFixed(6)}`);
+          
+          // Add AI response to conversation
+          conversation.addAssistantMessage(aiResponse);
+          
+          // Return the response with website analysis data and cost savings
+          return {
+            response: aiResponse,
+            nextStage: ASSESSMENT_STAGES.EXPORT_EXPERIENCE,
+            websiteAnalysis,
+            costSavings
+          };
         } catch (error) {
           console.error('Error analyzing website:', error);
-          // We'll proceed without structured data if the scraper fails
-          hasStructuredData = false;
+          
+          // If website analysis fails, continue with regular prompt
+          conversation.updateContext({ website: matches[0] });
         }
       }
     }
     
-    // Extract key information based on the stage
-    if (stage === ASSESSMENT_STAGES.INTRODUCTION) {
-      // Try to extract name, role, business name
-      const nameMatch = message.match(/(?:my name is|i'm|im|i am|name is|hi|hello|hey|this is|i'm called)\s+([a-zA-Z]+)/i);
-      const roleMatch = message.match(/(?:(?:i'm|im|i am)(?: a| the)? ([^,.]+? (?:at|in|of|for)))/i);
-      const businessMatch = message.match(/(?:(?:at|for|from|with|of) ([\w\s&\-\.]+))/i);
-      
-      let contextUpdates: Partial<ConversationContext> = {};
-      
-      if (nameMatch && nameMatch[1]) {
-        contextUpdates.userName = nameMatch[1];
-      }
-      
-      if (roleMatch && roleMatch[1]) {
-        contextUpdates.role = roleMatch[1];
-      }
-      
-      if (businessMatch && businessMatch[1]) {
-        contextUpdates.businessName = businessMatch[1];
-      }
-      
-      // Update context with extracted information
-      if (Object.keys(contextUpdates).length > 0) {
-        conversation.updateContext(contextUpdates);
-      }
-    }
+    // For other stages, use the appropriate prompt based on the stage
+    const prompt = getAssessmentPrompt(stage, conversation.getContext());
     
-    // Extract export experience if we're in that stage
-    if (stage === ASSESSMENT_STAGES.EXPORT_EXPERIENCE) {
-      conversation.updateContext({ 
-        exportExperience: message.length > 5 ? message : 'No export experience mentioned' 
-      });
-    }
-
-    // Extract motivation if we're in that stage  
-    if (stage === ASSESSMENT_STAGES.MOTIVATION) {
-      conversation.updateContext({ motivation: message });
-    }
-
-    // Extract target markets if we're in that stage
-    if (stage === ASSESSMENT_STAGES.TARGET_MARKETS) {
-      // Store the complete response
-      conversation.updateContext({ targetMarkets: [message] });
-      
-      // Check if they mentioned our supported markets
-      const mentionedMarkets = [];
-      if (message.toLowerCase().includes('uae') || 
-          message.toLowerCase().includes('emirates') || 
-          message.toLowerCase().includes('dubai')) {
-        mentionedMarkets.push('UAE');
-      }
-      if (message.toLowerCase().includes('usa') || 
-          message.toLowerCase().includes('united states') || 
-          message.toLowerCase().includes('america')) {
-        mentionedMarkets.push('USA');
-      }
-      if (message.toLowerCase().includes('uk') || 
-          message.toLowerCase().includes('united kingdom') || 
-          message.toLowerCase().includes('britain')) {
-        mentionedMarkets.push('UK');
-      }
-      
-      if (mentionedMarkets.length > 0) {
-        conversation.updateContext({ 
-          supportedTargetMarkets: mentionedMarkets,
-          additionalNotes: (context.additionalNotes || '') + 
-            `\nUser is interested in these supported markets: ${mentionedMarkets.join(', ')}`
-        });
-      }
-    }
-    
-    // Get the stage-specific prompt
-    const stagePrompt = getAssessmentPrompt(stage, context);
-    
-    // Create a more concise context summary from the current conversation context
-    const contextSummary = `
-User: ${context.userName || 'Unknown'}, ${context.role || 'Unknown'} at ${context.businessName || 'Unknown'}
-Website: ${context.website || 'Not provided'}
-Industry: ${context.industry || 'Unknown'}
-Export Exp: ${context.exportExperience || 'Not discussed'}
-Motivation: ${context.motivation || 'Not discussed'}
-Markets: ${context.targetMarkets ? context.targetMarkets.join(', ') : 'Not discussed'}
-${context.additionalNotes ? `Notes: ${context.additionalNotes}` : ''}
-`;
-    
-    // Enhance context with structured website data if available
-    let enhancedContext = contextSummary;
-    if (websiteAnalysisResult && hasStructuredData) {
-      enhancedContext = this.addStructuredDataToContext(contextSummary, websiteAnalysisResult);
-    }
-    
-    // Create a temporary system message for this interaction with enhanced context
-    const systemMessage = {
-      role: 'system' as const,
-      content: `${stagePrompt}\n\nCONTEXT:\n${enhancedContext}`
-    };
-    
-    // Get only the last 6 conversation messages to reduce token usage
-    const recentMessages = conversation.getRecentMessages(6);
-    
-    // Combine messages for the API call (excluding the original system message)
-    const messagesToSend = [
-      systemMessage,
-      ...recentMessages.filter(m => m.role !== 'system')
+    // Use SARAH to generate a response
+    const taskType = openAIService.mapStageToTaskType(stage);
+    const messages = [
+      { role: 'system' as const, content: DEFAULT_SYSTEM_PROMPT },
+      ...conversation.getAllMessages()
     ];
     
-    // Map the stage to a task type for model selection
-    const taskType = openAIService.mapStageToTaskType(stage);
-    
-    // Log the task type and complexity before making the API call
-    console.log(`Processing ${stage} stage as task type: ${taskType}`);
-    
-    // Get the AI response using the appropriate model based on task type and message complexity
-    const aiResponse = await openAIService.getCompletion(
-      messagesToSend,
-      undefined, // Use default options
-      taskType,
-      hasStructuredData
-    );
-    
-    // Add the AI response to the conversation
-    conversation.addAssistantMessage(aiResponse);
-    
-    // Determine the next stage
-    let nextStage = stage;
-    switch (stage) {
-      case ASSESSMENT_STAGES.INTRODUCTION:
+    try {
+      // Determine if structured data is available
+      const hasStructuredData = !!(
+        context.website || 
+        context.businessName || 
+        (context.targetMarkets && context.targetMarkets.length > 0)
+      );
+      
+      // Get AI completion with appropriate model based on task complexity
+      const aiResponse = await openAIService.getCompletion(
+        messages, 
+        undefined, 
+        taskType,
+        hasStructuredData,
+        userId // Pass userId for usage tracking
+      );
+      
+      // Add AI response to conversation
+      conversation.addAssistantMessage(aiResponse);
+      
+      // Determine next stage based on current stage
+      let nextStage = stage;
+      
+      if (stage === ASSESSMENT_STAGES.INTRODUCTION) {
         nextStage = ASSESSMENT_STAGES.WEBSITE_ANALYSIS;
-        break;
-      case ASSESSMENT_STAGES.WEBSITE_ANALYSIS:
+      } else if (stage === ASSESSMENT_STAGES.WEBSITE_ANALYSIS) {
         nextStage = ASSESSMENT_STAGES.EXPORT_EXPERIENCE;
-        break;
-      case ASSESSMENT_STAGES.EXPORT_EXPERIENCE:
+      } else if (stage === ASSESSMENT_STAGES.EXPORT_EXPERIENCE) {
         nextStage = ASSESSMENT_STAGES.MOTIVATION;
-        break;
-      case ASSESSMENT_STAGES.MOTIVATION:
+      } else if (stage === ASSESSMENT_STAGES.MOTIVATION) {
         nextStage = ASSESSMENT_STAGES.TARGET_MARKETS;
-        break;
-      case ASSESSMENT_STAGES.TARGET_MARKETS:
+      } else if (stage === ASSESSMENT_STAGES.TARGET_MARKETS) {
         nextStage = ASSESSMENT_STAGES.SUMMARY;
-        break;
-      // Keep on SUMMARY stage once reached
-      case ASSESSMENT_STAGES.SUMMARY:
-        nextStage = ASSESSMENT_STAGES.SUMMARY;
-        break;
+      }
+      
+      // Return the response
+      return {
+        response: aiResponse,
+        nextStage,
+        costSavings
+      };
+    } catch (error) {
+      console.error('Error generating AI response:', error);
+      
+      // In case of error, return a fallback response
+      const fallbackResponse = "I'm sorry, I'm having trouble generating a response right now. Could you please try again?";
+      
+      conversation.addAssistantMessage(fallbackResponse);
+      
+      return {
+        response: fallbackResponse,
+        nextStage: stage, // Stay on the same stage
+        costSavings
+      };
     }
-    
-    return {
-      response: aiResponse,
-      nextStage,
-      websiteAnalysis: websiteAnalysisResult
-    };
   }
   
   /**

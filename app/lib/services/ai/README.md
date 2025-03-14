@@ -1,12 +1,12 @@
-# TradeWizard Hybrid AI Model Selection
+# TradeWizard AI Model Selection
 
-This documentation describes the hybrid model approach implemented in TradeWizard to optimize OpenAI API costs while maintaining quality of responses. The system intelligently selects between GPT-4 and GPT-3.5 Turbo models based on task complexity, structured data availability, and interaction type.
+This documentation describes the simplified model approach implemented in TradeWizard to optimize OpenAI API costs while maintaining quality of responses. The system uses GPT-3.5 as the default model and only uses GPT-4 for specific complex tasks.
 
 ## Key Components
 
 ### OpenAI Service
 - Manages all interactions with the OpenAI API
-- Implements model selection based on complexity and task type
+- Uses a simple model selection strategy based on task type
 - Handles error recovery and fallback mechanisms
 
 ### Conversation Manager
@@ -14,43 +14,34 @@ This documentation describes the hybrid model approach implemented in TradeWizar
 - Implements token optimization by pruning old messages
 - Preserves important context information for AI interactions
 
-### Prompt Templates
-- Structured prompts for different assessment stages
-- Dynamically generated based on user context
-- Optimized for token efficiency
-
 ### Web Scraper Integration
 - Extracts structured data from business websites
 - Reduces token usage by providing pre-processed information
-- Enables downgrading to cheaper models for many interactions
 
-## Hybrid Model Approach
+## Model Selection Strategy
 
-The service intelligently selects the appropriate OpenAI model based on:
+The service uses a straightforward model selection approach:
 
-1. **Task Complexity** - Analyzes user queries to determine complexity level
-2. **Data Availability** - Uses cheaper models when structured data is available
-3. **Task Type** - Maps assessment stages to specific task types with different requirements
+- **GPT-3.5-Turbo** is used as the default model for most tasks, including:
+  - Initial assessments
+  - Export experience questions
+  - Motivation analysis
+  - Target market identification
+  - Follow-up questions
+  - Clarification requests
 
-### Model Selection Strategy
+- **GPT-4** is only used for:
+  - Website analysis (which requires advanced reasoning)
+  - Final summaries and report generation
 
-| Task Type | Complexity | With Structured Data | Without Structured Data |
-|-----------|------------|----------------------|-------------------------|
-| Website Analysis | High | GPT-3.5 Turbo | GPT-4 Turbo |
-| Export Assessment | High | GPT-4 Turbo | GPT-4 Turbo |
-| Export Assessment | Medium | GPT-3.5 Turbo | GPT-3.5 Turbo |
-| Export Assessment | Low | GPT-3.5 Turbo | GPT-3.5 Turbo |
-| Summary/Scoring | High | GPT-4 Turbo | GPT-4 Turbo |
-| Clarifications | Low | GPT-3.5 Turbo | GPT-3.5 Turbo |
-| Follow-up Questions | Low | GPT-3.5 Turbo | GPT-3.5 Turbo |
+This approach balances cost efficiency with user experience, using the more powerful and expensive model only when it provides significant value.
 
-### Complexity Detection
+### Benefits of This Approach
 
-The system determines query complexity using multiple factors:
-
-1. **Query Length** - Longer queries typically require more processing power
-2. **Industry Terminology** - Presence of export/industry-specific terms
-3. **Cross-Reference Requirements** - Queries requiring synthesis of multiple pieces of information
+1. **Cost Efficiency**: Using GPT-3.5 for most interactions reduces operational costs significantly
+2. **Faster Response Times**: GPT-3.5 typically has lower latency than GPT-4
+3. **Simplified Logic**: A straightforward decision model reduces complexity and potential errors
+4. **Consistent User Experience**: More predictable response patterns and times
 
 ## Web Scraper Integration
 
@@ -58,7 +49,7 @@ The web scraper service extracts structured business data from user websites:
 
 1. Replaces raw HTML content with structured information
 2. Reduces token usage by over 90% for website analysis
-3. Enables using GPT-3.5 Turbo for tasks that would otherwise require GPT-4
+3. Provides consistent data formats for more reliable analysis
 
 ## Token Usage Optimizations
 
@@ -67,44 +58,19 @@ Additional strategies implemented to reduce token usage:
 1. **Prompt Compression** - Removing redundant instructions and content
 2. **Context Management** - Only including relevant context based on current stage
 3. **Message History Limitation** - Keeping only recent and relevant messages
-4. **Dynamic Responses** - Shorter responses for simpler questions
-5. **Fallback Mechanisms** - Graceful handling of API failures
-
-## Estimated Cost Savings
-
-| Assessment Component | Before Optimization | After Hybrid Approach | Savings |
-|----------------------|---------------------|----------------------|---------|
-| Website Analysis | ~15,000 tokens | ~1,500 tokens | ~90% |
-| User Interactions | All GPT-4 | 70% GPT-3.5, 30% GPT-4 | ~60% |
-| Context Management | Full history | Optimized history | ~40% |
-| Total Cost | 100% | ~30% | ~70% |
 
 ## Usage Example
 
 ```typescript
-import { openAIService, TaskType } from './ai';
+import { openAIService } from './ai';
 
-// Select model based on task complexity
-const taskType: TaskType = 'website_analysis';
-const userQuery = "Tell me about my export readiness";
-const hasStructuredData = true;
-
-// Get appropriate model
-const model = openAIService.selectModelForTask(
-  taskType,
-  userQuery,
-  hasStructuredData
-);
-
-// Log the selected model
-console.log(`Using ${model} for ${taskType}`);
-
-// Get AI response using selected model
+// Get AI response using appropriate model based on task type
 const response = await openAIService.getCompletion(
   messages,
-  { model },
-  taskType,
-  hasStructuredData
+  {}, // Default options
+  'website_analysis', // Task type determines model selection
+  false, // Whether structured data is available
+  'user123' // User ID for usage tracking
 );
 ```
 

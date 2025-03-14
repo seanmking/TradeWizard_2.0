@@ -32,7 +32,6 @@ class ModelSelector {
 
   /**
    * Get the current configuration
-   * @returns Current configuration
    */
   getConfig(): ModelSelectionConfig {
     return { ...this.config };
@@ -40,16 +39,15 @@ class ModelSelector {
 
   /**
    * Detect the complexity of a query based on multiple factors
-   * @param queryContent - The text of the query
+   * Simplified to favor lower complexity assessments unless clear indicators of high complexity
+   * @param queryContent - The content of the user's query
    * @param taskType - The type of task being performed
-   * @returns The detected complexity level
+   * @returns The complexity level of the query
    */
   detectComplexity(
     queryContent: string,
     taskType: TaskType
   ): TaskComplexity {
-    // Task type-based complexity rules
-    
     // Always treat certain task types as high complexity
     if (
       taskType === 'website_analysis' || 
@@ -67,61 +65,83 @@ class ModelSelector {
       return 'low';
     }
     
-    // For other tasks, calculate complexity based on query content
-    let complexityScore = 0;
+    // For other tasks, use a simplified scoring system
+    // that defaults to lower complexity unless clear indicators exist
     
-    // 1. Score based on query length
+    // Score based on query length (main factor)
     const queryLength = queryContent.length;
-    
     if (queryLength >= this.config.complexityThresholds.queryLength.high) {
-      complexityScore += 2;
-    } else if (queryLength >= this.config.complexityThresholds.queryLength.medium) {
-      complexityScore += 1;
-    }
-    
-    // 2. Score based on industry terminology
-    let industryTermCount = 0;
-    this.config.industryTerms.forEach(term => {
-      // Use word boundaries for more accurate matching
-      const regex = new RegExp(`\\b${term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-      if (regex.test(queryContent)) {
-        industryTermCount++;
-      }
-    });
-    
-    if (industryTermCount >= this.config.complexityThresholds.industryTermCount.high) {
-      complexityScore += 2;
-    } else if (industryTermCount >= this.config.complexityThresholds.industryTermCount.medium) {
-      complexityScore += 1;
-    }
-    
-    // 3. Score based on technical terminology
-    let technicalTermCount = 0;
-    this.config.technicalTerms.forEach(term => {
-      const regex = new RegExp(`\\b${term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-      if (regex.test(queryContent)) {
-        technicalTermCount++;
-      }
-    });
-    
-    if (technicalTermCount >= this.config.complexityThresholds.technicalTermCount.high) {
-      complexityScore += 2;
-    } else if (technicalTermCount >= this.config.complexityThresholds.technicalTermCount.medium) {
-      complexityScore += 1;
-    }
-    
-    // Convert final score to complexity level
-    if (complexityScore >= 4) {
       return 'high';
-    } else if (complexityScore >= 2) {
-      return 'medium';
-    } else {
-      return 'low';
     }
+    
+    // Count industry and technical terms
+    const industryTermCount = this.countTermsInQuery(
+      queryContent, 
+      this.config.industryTerms
+    );
+    
+    const technicalTermCount = this.countTermsInQuery(
+      queryContent, 
+      this.config.technicalTerms
+    );
+    
+    // Only consider high complexity if both term thresholds are met
+    if (
+      industryTermCount >= this.config.complexityThresholds.industryTermCount.high &&
+      technicalTermCount >= this.config.complexityThresholds.technicalTermCount.high
+    ) {
+      return 'high';
+    }
+    
+    // Default to medium complexity for queries with moderate length or some technical terms
+    if (
+      queryLength >= this.config.complexityThresholds.queryLength.medium ||
+      industryTermCount >= this.config.complexityThresholds.industryTermCount.medium ||
+      technicalTermCount >= this.config.complexityThresholds.technicalTermCount.medium
+    ) {
+      return 'medium';
+    }
+    
+    // Default to low complexity for all other cases
+    return 'low';
+  }
+
+  /**
+   * Helper method to efficiently count terms in a query
+   * Optimized for performance with long queries
+   */
+  private countTermsInQuery(query: string, terms: string[]): number {
+    const lowerQuery = query.toLowerCase();
+    let count = 0;
+    
+    // Create a set of words from the query for more efficient matching
+    const queryWords = new Set(
+      lowerQuery
+        .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' ') // Replace punctuation with spaces
+        .split(/\s+/) // Split by whitespace
+        .filter(word => word.length > 0) // Remove empty strings
+    );
+    
+    // Count terms that appear as whole words
+    for (const term of terms) {
+      // For multi-word terms
+      if (term.includes(' ')) {
+        if (lowerQuery.includes(term.toLowerCase())) {
+          count++;
+        }
+      } 
+      // For single-word terms
+      else if (queryWords.has(term.toLowerCase())) {
+        count++;
+      }
+    }
+    
+    return count;
   }
 
   /**
    * Select the appropriate model based on task type, query complexity, and data availability
+   * Simplified to favor GPT-3.5 for most scenarios
    * @param taskType - The type of task being performed
    * @param queryContent - The content of the user's query
    * @param hasStructuredData - Whether structured data is available for this task
@@ -137,14 +157,8 @@ class ModelSelector {
       return this.config.taskTypeOverrides[taskType]!;
     }
     
-    // 2. If structured data is available, we can often use a less powerful model
+    // 2. If structured data is available, always use GPT-3.5
     if (hasStructuredData) {
-      // Even with structured data, some tasks still need GPT-4
-      if (taskType === 'summary' || taskType === 'website_analysis') {
-        return this.config.modelMapping.high;
-      }
-      
-      // Most other tasks can use GPT-3.5 when structured data is available
       return this.config.modelMapping.low;
     }
     
@@ -154,17 +168,17 @@ class ModelSelector {
   }
 }
 
-// Create a singleton instance
+// Create singleton instance
 const modelSelector = new ModelSelector();
 
-// Export the selectModelForTask function for direct use
+// Export the instance as default
+export default modelSelector;
+
+// Also export a standalone function for convenience
 export const selectModelForTask = (
   taskType: TaskType,
   queryContent: string = '',
   hasStructuredData: boolean = false
 ): string => {
   return modelSelector.selectModelForTask(taskType, queryContent, hasStructuredData);
-};
-
-// Export the full service for more advanced usage
-export default modelSelector; 
+}; 

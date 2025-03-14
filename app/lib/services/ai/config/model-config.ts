@@ -64,17 +64,18 @@ export const defaultModelConfig: ModelSelectionConfig = {
     }
   },
   
-  // Map complexity levels to specific models
+  // Map complexity levels to specific models - simplified to use GPT-3.5 for most cases
   modelMapping: {
-    high: 'gpt-4',          // Use GPT-4 for high complexity
+    high: 'gpt-4',           // Use GPT-4 only for truly high complexity tasks
     medium: 'gpt-3.5-turbo', // Use GPT-3.5 for medium complexity
     low: 'gpt-3.5-turbo'     // Use GPT-3.5 for low complexity
   },
   
   // Override settings for specific task types that always require a specific model
   taskTypeOverrides: {
-    'website_analysis': 'gpt-4',  // Always use GPT-4 for website analysis
-    'summary': 'gpt-4'            // Always use GPT-4 for summary generation
+    'website_analysis': 'gpt-4',  // Complex website analysis still uses GPT-4
+    'summary': 'gpt-4'            // Summary generation still uses GPT-4
+    // All other tasks will follow the complexity-based selection
   },
   
   // Industry-specific terms that might indicate higher complexity

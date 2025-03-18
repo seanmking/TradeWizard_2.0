@@ -73,13 +73,13 @@ const FALLBACK_QUESTIONS: AssessmentQuestion[] = [
   },
   {
     id: 'target_markets',
-    prompt: "Which specific international markets are you interested in exporting to? We currently specialize in UAE, USA, and UK.",
+    prompt: "For the preliminary assessment report, we are focusing on UAE, USA, and UK. Would you like us to show you export opportunities in these markets?",
     extraction_patterns: {
       target_markets: /(.*)/i
     },
     validation: (input: string) => {
-      if (input.length < 3) {
-        return { valid: false, message: "Please let me know which markets you're interested in, even if they're not on our supported list." };
+      if (input.length < 2) {
+        return { valid: false, message: "Please let me know if you'd like to see export opportunities in UAE, USA, and UK." };
       }
       return { valid: true };
     }
@@ -170,6 +170,33 @@ const InitialAssessment: React.FC = () => {
       // Extract data from the response
       const extractedData = extractDataFromResponse(userInput, currentQuestion.extraction_patterns);
       
+      // Special handling for target_markets question
+      if (currentQuestionId === 'target_markets') {
+        // Check if response is affirmative
+        const isAffirmative = /\b(yes|yeah|sure|ok|okay|fine|alright|of course|definitely|absolutely|proceed|interested|show me|let's see|let me see)\b/i.test(userInput);
+        
+        // Check for specific market mentions
+        const mentionsUAE = /\b(uae|united arab emirates|dubai|abu dhabi)\b/i.test(userInput);
+        const mentionsUSA = /\b(usa|united states|america|us)\b/i.test(userInput);
+        const mentionsUK = /\b(uk|united kingdom|britain|england)\b/i.test(userInput);
+        
+        // Set target markets based on response
+        if (isAffirmative) {
+          // If generally affirmative, include all three markets
+          extractedData.target_markets = "UAE, USA, UK";
+        } else if (mentionsUAE || mentionsUSA || mentionsUK) {
+          // If specific markets mentioned, only include those
+          const markets = [];
+          if (mentionsUAE) markets.push("UAE");
+          if (mentionsUSA) markets.push("USA");
+          if (mentionsUK) markets.push("UK");
+          extractedData.target_markets = markets.join(", ");
+        } else if (/\b(no|nope|not interested)\b/i.test(userInput)) {
+          // If negative, set to none but continue assessment
+          extractedData.target_markets = "None selected";
+        }
+      }
+      
       // Debug: Log extracted data
       console.log('Extracted data:', extractedData);
       console.log('Current user responses:', userResponses);
@@ -243,11 +270,14 @@ const InitialAssessment: React.FC = () => {
           
           setMessages(prev => [...prev, completionMessage]);
           
-          // Transition to results page after a delay
-          setIsTransitioning(true);
+          // Give time for the completion message to be visible before transitioning
           setTimeout(() => {
-            window.location.href = '/assessment-results';
-          }, 8000); // Increased from 3000ms to 8000ms (8 seconds) to make it more noticeable
+            // Transition to results page after a delay
+            setIsTransitioning(true);
+            setTimeout(() => {
+              window.location.href = '/assessment-results';
+            }, 3000); // Reduced from 8 seconds to 3 seconds for transition after fade-out begins
+          }, 5000); // Show completion message for 5 seconds before starting fade-out
         }
         
         // Stop typing indicator

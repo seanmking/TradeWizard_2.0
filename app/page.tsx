@@ -20,19 +20,6 @@ export default function Home() {
           Start Export Readiness Assessment
         </Link>
       </div>
-      
-      <div className="bg-blue-50 p-6 rounded-lg max-w-xl">
-        <h2 className="text-2xl font-semibold mb-2">Project Structure Updated</h2>
-        <p className="mb-4">
-          The project structure has been successfully standardized according to the development strategy.
-        </p>
-        <ul className="list-disc pl-5 space-y-1">
-          <li>Removed tradewizard submodule</li>
-          <li>Standardized directory structure</li>
-          <li>Consolidated duplicate files</li>
-          <li>Updated import paths</li>
-        </ul>
-      </div>
     </main>
   );
 } 

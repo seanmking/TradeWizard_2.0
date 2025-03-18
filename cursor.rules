@@ -1,54 +1,69 @@
-{
-  `path`: `/tmp/TradeWizard/cursor.rules`,
-  `content`: `# TradeWizard Development Rules
+# TradeWizard 2.0 Development Guidelines
 
-# Code Quality Standards
-- Modularity: Components should have single responsibilities
-- Reusability: Common functionality should be abstracted into reusable utilities
-- Readability: Code should be self-documenting with clear naming conventions
-- Consistency: Follow established patterns throughout the codebase
-- Testing: Critical paths should have automated tests
+## Project Execution Conventions
 
-# Format Rules
-- Use 2 spaces for indentation
-- Max line length: 100 characters
-- Use semicolons in JavaScript/TypeScript
-- Use single quotes for strings
-- Always use curly braces for control statements
-- Trailing commas in multiline objects and arrays
+### ALWAYS CHECK start.sh FIRST
+Before running any scripts or services, review the `start.sh` file to understand:
+- How services are started and in what order
+- What environment variables are required
+- Which directory to run commands from
+- How test modes are invoked
+- Any special protocols or parameters needed
 
-# Naming Conventions
-- React components: PascalCase (e.g., ExportReadinessScore)
-- Functions and variables: camelCase (e.g., fetchComplianceData)
-- Constants: UPPER_CASE (e.g., API_ENDPOINT)
-- Files: kebab-case (e.g., export-readiness-component.tsx)
-- Database tables: snake_case (e.g., user_profiles)
+### Running Services and Tests
 
-# Directory Structure
-- Follow the established project structure in TradeWizard_2.0_Codebase_Structure_and_Tech_Stack.docx
-- Group files by feature rather than by type
-- Keep related files close to each other
+1. **Directory Context Matters**:
+   - Most scripts must be run from their respective directories (e.g., backend scripts from the `/backend` directory)
+   - Check `start.sh` to confirm the correct working directory for each command
 
-# UI/UX Principles
-- Use shadcn UI components wherever possible
-- Follow TailwindCSS conventions for styling
-- Mobile-first approach for all UI components
-- Use established design patterns from the TradeWizard design system
+2. **Environment Variables**:
+   - Use `TEST_MODE=true` when running test scripts
+   - Set proper PORT values as defined in start.sh
+   - Example: `cd backend && TEST_MODE=true PORT=5005 npm run test:compliance-simple`
 
-# Commit Message Format
-- feat: A new feature
-- fix: A bug fix
-- docs: Documentation changes
-- style: Code style changes (formatting, missing semicolons, etc.)
-- refactor: Code changes that neither fix bugs nor add features
-- perf: Performance improvements
-- test: Adding or modifying tests
-- chore: Changes to the build process or auxiliary tools
+3. **Script Naming Conventions**:
+   - Test scripts: `test:{component-name}`
+   - Development servers: `dev`
+   - Production builds: `build`
 
-# Pull Request Process
-- Reference issue numbers in PR titles
-- Ensure all automated tests pass
-- Require at least one code review before merging
-- Keep PRs focused on a single concern
-`
-}
+## Code Style & Organization
+
+1. **TypeScript Safety**:
+   - Always handle null checking properly
+   - Use non-null assertions (!) only when you're absolutely certain
+   - Add explicit type checking for mock data
+
+2. **MCP Structure**:
+   - Follow Model-Controller-Protocol pattern
+   - Keep models in `models/` directory
+   - Keep controllers in `controllers/` directory
+   - Keep services in `services/` directory
+
+3. **Error Handling**:
+   - Use consistent error response format
+   - Always include status code and meaningful message
+   - Log errors in development mode
+
+## Documentation
+
+1. **README Files**:
+   - Each MCP should have its own README.md
+   - Document API endpoints, data structures, and usage examples
+
+2. **Comments**:
+   - Document complex logic with clear comments
+   - Add JSDoc comments for public functions and interfaces
+
+## Testing & Deployment
+
+1. **Test Mode**:
+   - Use mock data in test mode for reliable unit tests
+   - Set `TEST_MODE=true` environment variable for testing
+
+2. **Cache Management**:
+   - Be aware of caching behavior in development vs production
+   - Use debug endpoints to clear cache when needed
+
+## REMINDER
+Always run scripts according to the conventions in the project's start.sh file.
+When in doubt, run: `./start.sh test [test-type]` to use the project's standardized test runner.

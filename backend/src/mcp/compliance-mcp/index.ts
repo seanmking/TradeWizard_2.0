@@ -1,6 +1,21 @@
 import express, { Request, Response, NextFunction, Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import path from 'path';
+
+// Import controllers
+import * as requirementController from './controllers/requirement.controller';
+import * as tariffController from './controllers/tariff.controller';
+import * as industryController from './controllers/industry.controller';
+import * as costCalculatorController from './controllers/cost-calculator.controller';
+
+// Import services
+import { dataSourceService } from './services/data-source.service';
+import { cacheService } from './services/cache.service';
+
+// Import external API services
+// We'll use these services instead of direct database connections when running in test mode
+const comtradeService = require('../../services/comtradeService');
+import { setupWitsConnector } from '../market-intelligence-mcp/connectors/wits';
 
 dotenv.config();
 
@@ -10,51 +25,102 @@ type RouteHandler = (req: Request, res: Response, next?: NextFunction) => Promis
 // Create router instance
 const router: Router = express.Router();
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-// Debug endpoint to list all tables in the database
-const listTables: RouteHandler = async (req, res) => {
+// Debug endpoint to check health of the compliance MCP
+const healthCheck: RouteHandler = async (req, res) => {
   try {
-    const { data, error } = await supabase.rpc('list_tables');
+    // Get cache statistics
+    const cacheStats = cacheService.getStats();
     
-    if (error) throw error;
+    // Setup WITS connector with config from env vars or use defaults for testing
+    const witsConnector = setupWitsConnector({
+      apiKey: process.env.WITS_API_KEY || 'test-key',
+      baseUrl: process.env.WITS_API_URL || 'https://wits.worldbank.org/API/V1'
+    });
     
+    // Create response with service status
     return res.status(200).json({
       status: 'success',
-      data: data || []
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      services: {
+        comtrade: true,
+        wits: true
+      },
+      cache: cacheStats
     });
   } catch (error: any) {
-    console.error('Error listing tables:', error);
+    console.error('Health check failed:', error);
     return res.status(500).json({
       status: 'error',
       code: 500,
-      message: error.message || 'Failed to list tables'
+      message: error.message || 'Health check failed'
     });
   }
 };
 
-// Debug endpoint to run a raw query
+// Debug endpoint to list available data sources
+const listTables: RouteHandler = async (req, res) => {
+  try {
+    // Get available data sources from our APIs
+    const dataSources = [
+      { name: 'comtrade', description: 'UN Comtrade International Trade Statistics' },
+      { name: 'wits', description: 'World Integrated Trade Solution (World Bank)' },
+      { name: 'trademap', description: 'ITC TradeMap Statistics' },
+      { name: 'cache', description: 'In-memory Cache Service' }
+    ];
+    
+    return res.status(200).json({
+      status: 'success',
+      data: dataSources
+    });
+  } catch (error: any) {
+    console.error('Error listing data sources:', error);
+    return res.status(500).json({
+      status: 'error',
+      code: 500,
+      message: error.message || 'Failed to list data sources'
+    });
+  }
+};
+
+// Debug endpoint to run a query on comtrade
 const runRawQuery: RouteHandler = async (req, res) => {
   try {
     const { query } = req.params;
     const decodedQuery = decodeURIComponent(query);
     
-    console.log(`Running raw query: ${decodedQuery}`);
+    console.log(`Running query: ${decodedQuery}`);
     
-    const { data, error } = await supabase.rpc('run_query', { query_text: decodedQuery });
+    // Parse the query parameters
+    // Expected format: reporterCode=USA&flowCode=1&period=2022&cmdCode=TOTAL
+    const params = new URLSearchParams(decodedQuery);
     
-    if (error) throw error;
+    const reporterCode = params.get('reporterCode') || 'USA';
+    const flowCode = params.get('flowCode') || '1';
+    const period = params.get('period') || '2022';
+    const cmdCode = params.get('cmdCode') || 'TOTAL';
+    
+    // Use comtrade service to get the data
+    const data = await comtradeService.getTradeData(
+      reporterCode,
+      flowCode,
+      period,
+      cmdCode
+    );
     
     return res.status(200).json({
       status: 'success',
+      source: 'comtrade',
+      query: {
+        reporterCode,
+        flowCode,
+        period,
+        cmdCode
+      },
       data: data || []
     });
   } catch (error: any) {
-    console.error('Error running raw query:', error);
+    console.error('Error running query:', error);
     return res.status(500).json({
       status: 'error',
       code: 500,
@@ -63,175 +129,74 @@ const runRawQuery: RouteHandler = async (req, res) => {
   }
 };
 
-// Get export requirements for a specific country and industry
-const getExportRequirements: RouteHandler = async (req, res) => {
+// Cache management endpoint
+const clearCache: RouteHandler = async (req, res) => {
   try {
-    const { country, industry } = req.params;
+    const { key } = req.query;
     
-    // Log for debugging
-    console.log(`Fetching export requirements for country: ${country}, industry: ${industry}`);
-    
-    // Query using the enhanced compliance_requirements table
-    const { data, error } = await supabase
-      .from('compliance_requirements')
-      .select(`
-        id,
-        country_code,
-        industry,
-        hs_code,
-        requirement_name,
-        requirement_description,
-        required,
-        documentation_link,
-        issuing_authority,
-        estimated_processing_time_days,
-        estimated_cost_zar,
-        documentation_language,
-        validity_period_months,
-        renewal_process,
-        legal_reference,
-        verification_method,
-        priority_level
-      `)
-      .eq('country_code', country)
-      .eq('industry', industry);
-    
-    if (error) throw error;
+    if (key) {
+      // Clear specific cache key
+      cacheService.delete(key as string);
+      console.log(`Cleared cache for key: ${key}`);
+    } else {
+      // Clear all cache
+      cacheService.clear();
+      console.log('Cleared all cache');
+    }
     
     return res.status(200).json({
       status: 'success',
-      data: data || []
+      message: key ? `Cache cleared for key: ${key}` : 'All cache cleared',
+      cacheStats: cacheService.getStats()
     });
   } catch (error: any) {
-    console.error('Error fetching export requirements:', error);
+    console.error('Error clearing cache:', error);
     return res.status(500).json({
       status: 'error',
       code: 500,
-      message: error.message || 'Failed to fetch export requirements'
+      message: error.message || 'Failed to clear cache'
     });
   }
 };
 
-// Get tariff information for a specific country and HS code
-const getTariffInformation: RouteHandler = async (req, res) => {
-  try {
-    const { country, hsCode } = req.params;
-    
-    // Log for debugging
-    console.log(`Fetching tariff information for country: ${country}, HS code: ${hsCode}`);
-    
-    // Query using the enhanced tariff_data table
-    const { data, error } = await supabase
-      .from('tariff_data')
-      .select(`
-        id,
-        importing_country_code,
-        hs_code,
-        exporting_country_code,
-        tariff_rate,
-        tariff_type,
-        trade_agreement,
-        certificate_of_origin_required,
-        rules_of_origin_text,
-        quota_limit,
-        quota_unit,
-        quota_period,
-        non_tariff_measures,
-        safeguard_measures,
-        specific_duty_amount,
-        specific_duty_unit,
-        vat_rate,
-        documentation_requirements,
-        effective_date,
-        expiry_date,
-        data_source,
-        last_verified_date
-      `)
-      .eq('importing_country_code', country)
-      .eq('hs_code', hsCode)
-      .eq('exporting_country_code', 'ZA')
-      .single();
-    
-    if (error && error.code !== 'PGRST116') throw error;
-    
-    return res.status(200).json({
-      status: 'success',
-      data: data || {
-        importing_country_code: country,
-        hs_code: hsCode,
-        exporting_country_code: 'ZA',
-        tariff_rate: null,
-        message: "Tariff information not available"
-      }
-    });
-  } catch (error: any) {
-    console.error('Error fetching tariff data:', error);
-    return res.status(500).json({
-      status: 'error',
-      code: 500,
-      message: error.message || 'Failed to fetch tariff data'
-    });
-  }
-};
+// ----------------------------------------------------------------------------
+// Register routes for all controllers
+// ----------------------------------------------------------------------------
 
-// Get SA industry classifications
-const getSAIndustryClassifications: RouteHandler = async (req, res) => {
-  try {
-    // Query all industry classifications
-    const { data, error } = await supabase
-      .from('sa_industry_classifications')
-      .select('*');
-    
-    if (error) throw error;
-    
-    return res.status(200).json({
-      status: 'success',
-      data: data || []
-    });
-  } catch (error: any) {
-    console.error('Error fetching industry classifications:', error);
-    return res.status(500).json({
-      status: 'error',
-      code: 500,
-      message: error.message || 'Failed to fetch industry classifications'
-    });
-  }
-};
-
-// Get documentation details for a specific requirement
-const getComplianceDocumentation: RouteHandler = async (req, res) => {
-  try {
-    const { requirementId } = req.params;
-    
-    const { data, error } = await supabase
-      .from('compliance_documentation')
-      .select('*')
-      .eq('requirement_id', requirementId);
-    
-    if (error) throw error;
-    
-    return res.status(200).json({
-      status: 'success',
-      data: data || []
-    });
-  } catch (error: any) {
-    console.error('Error fetching compliance documentation:', error);
-    return res.status(500).json({
-      status: 'error',
-      code: 500,
-      message: error.message || 'Failed to fetch compliance documentation'
-    });
-  }
-};
-
-// Register routes with explicit handler functions
-router.get('/export-requirements/:country/:industry', getExportRequirements);
-router.get('/tariffs/:country/:hsCode', getTariffInformation);
-router.get('/sa-industry-classifications', getSAIndustryClassifications);
-router.get('/documentation/:requirementId', getComplianceDocumentation);
-
-// Debug routes
+// Health check and debug routes
+router.get('/health', healthCheck);
 router.get('/debug/tables', listTables);
 router.get('/debug/query/:query', runRawQuery);
+router.post('/debug/clear-cache', clearCache);
+
+// Export requirement routes
+router.get('/export-requirements/:country/:industry', requirementController.getExportRequirements);
+router.get('/export-requirements/by-hs-code/:country/:hsCode', requirementController.getExportRequirementsByHsCode);
+router.post('/export-requirements', requirementController.createExportRequirement);
+router.put('/export-requirements/:id', requirementController.updateExportRequirement);
+router.delete('/export-requirements/:id', requirementController.deleteExportRequirement);
+
+// New export requirement related routes
+router.get('/certifications/:country/:sector/:subsector', requirementController.getCertifications);
+router.get('/documentation/:country/:sector/:subsector', requirementController.getDocumentation);
+router.get('/subsector-requirements/:country/:sector/:subsector', requirementController.getSubsectorRequirements);
+router.get('/regulatory-sources/:country/:sector', requirementController.getRegulatoryAuthorities);
+router.get('/requirement-details/:id', requirementController.getRequirementDetails);
+router.get('/non-tariff-measures/:country/:hsCode', requirementController.getNonTariffMeasures);
+router.get('/regulatory-updates', requirementController.checkRegulatoryUpdates);
+
+// Tariff routes
+router.get('/tariffs/:country/:hsCode', tariffController.getTariffInformation);
+router.get('/tariffs/comparison/:hsCode', tariffController.getTariffComparisonByHsCode);
+router.post('/tariffs', tariffController.createOrUpdateTariffData);
+
+// Industry routes
+router.get('/sa-industry-classifications', industryController.getSAIndustryClassifications);
+router.get('/sa-industry-classifications/:id', industryController.getIndustryClassificationById);
+router.get('/hs-code-to-industry/:hsCode', industryController.mapHsCodeToIndustry);
+router.get('/industry-regulations/:industry', industryController.getIndustryRegulations);
+
+// Cost calculator routes
+router.get('/calculate-costs/:country/:hsCode', costCalculatorController.calculateComplianceCosts);
 
 export default router; 

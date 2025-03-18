@@ -92,7 +92,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
       
       <div className={`
         ${isAssistant ? 'message-bubble-assistant' : 'message-bubble-user'}
-        ${isCompletionMessage ? 'bg-green-600 font-medium text-white shadow-lg pulse-animation' : ''}
+        ${isCompletionMessage ? 'completion-message pulse-animation' : ''}
         ${getAnimationClass()}
         ${isMobile ? 'text-sm py-2 px-3' : ''}
       `}>

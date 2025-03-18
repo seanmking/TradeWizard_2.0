@@ -8,7 +8,10 @@
     "start": "node dist/index.js",
     "lint": "eslint . --ext .ts",
     "test": "jest",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "test:market-intelligence": "ts-node src/test-mcp.ts",
+    "test:compliance": "ts-node src/test-compliance-mcp.ts",
+    "test:compliance-simple": "ts-node src/test-compliance-mcp-simplified.ts"
   },
   "keywords": [],
   "author": "",

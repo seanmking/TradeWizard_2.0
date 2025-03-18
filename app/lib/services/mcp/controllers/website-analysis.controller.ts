@@ -30,7 +30,18 @@ function getMockAnalysisData(url: string): EnhancedWebsiteAnalysisResult {
     
     // Enhanced fields
     productDetails: [
-      { name: 'Sample Product', description: 'A sample product description' }
+      { 
+        name: 'Premium Organic Coffee Beans', 
+        description: 'Our signature organic coffee beans sourced from sustainable farms'
+      },
+      {
+        name: 'Specialty Tea Collection',
+        description: 'Hand-picked tea varieties from around the world'
+      },
+      {
+        name: 'Barista Training Services',
+        description: 'Professional coffee preparation training for businesses and individuals'
+      }
     ],
     exportMentions: ['Sample export statement'],
     contactInfo: {

@@ -9,7 +9,7 @@ const endpoints = [
 ];
 
 // Configuration
-const port = 5001;
+const port = 5002;
 const host = 'localhost';
 
 // Function to make a GET request to an endpoint

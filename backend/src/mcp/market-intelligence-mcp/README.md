@@ -1,6 +1,96 @@
 # Market Intelligence MCP
 
-This Market Intelligence MCP provides access to various trade data sources to analyze international trade flows, market opportunities, and trade barriers.
+The Market Intelligence Model Context Protocol (MCP) is a structured data layer for handling trade data and market intelligence information. This MCP is designed to provide a consistent interface for retrieving, processing, and delivering market intelligence data from various sources.
+
+## Overview
+
+The Market Intelligence MCP follows the principles of Model Context Protocols in TradeWizard:
+
+1. **Structured Data Fetching**: Performs structured data fetching based on explicit requests
+2. **Standardized Responses**: Returns standardized, structured responses in JSON format
+3. **Core Data Retrieval**: Handles core data retrieval from various sources like regulatory databases and APIs
+4. **Scalable, Uniform Data**: Provides scalable, uniform data responses while maintaining data integrity
+5. **Caching Strategies**: Implements caching strategies for performance optimization
+
+## Structure
+
+The Market Intelligence MCP is organized as follows:
+
+```
+market-intelligence-mcp/
+├── connectors/         # Connectors to external data sources
+│   ├── comtrade.ts     # UN Comtrade API connector
+│   ├── trade-map.ts    # Trade Map API connector
+│   └── wits.ts         # World Bank WITS API connector
+├── controllers/        # API route controllers
+│   ├── market-opportunity.controller.ts  # Market opportunity analysis
+│   └── trade-flow.controller.ts          # Trade flow data
+├── models/             # Data models
+├── services/           # Business logic services
+│   ├── cache.service.ts         # Caching service
+│   └── trade-analysis.service.ts # Trade data analysis
+└── index.ts            # Main MCP entry point
+```
+
+## Available Endpoints
+
+The Market Intelligence MCP exposes the following endpoints:
+
+### Health and Debug
+
+- `GET /health` - Check the health of the Market Intelligence MCP
+- `POST /clear-cache` - Clear the cache
+
+### Trade Flow Data
+
+- `GET /trade-flow/:hsCode/:exporterCountry/:importerCountry` - Get trade flow data for a specific product between countries
+  - Query params: `year` (optional), `source` (optional: 'tradeMap', 'comtrade', 'wits')
+
+- `GET /top-exporters/:hsCode` - Get top exporters for a specific product
+  - Query params: `limit` (optional, default: 10), `year` (optional)
+
+- `GET /historical-trade/:hsCode/:countryCode` - Get historical trade data for a product and country
+  - Query params: `startYear` (optional), `endYear` (optional), `isExport` (optional, boolean)
+
+### Market Opportunities
+
+- `GET /market-opportunities/:hsCode/:exporterCountry` - Get market opportunities for a specific product
+  - Query params: `limit` (optional, default: 10)
+
+- `GET /market-access/:hsCode/:exporterCountry` - Get market access analysis for specific target markets
+  - Query params: `markets` (optional, comma-separated list of country codes)
+
+## Usage Example
+
+```typescript
+import express from 'express';
+import marketIntelligenceMcp from './mcp/market-intelligence-mcp/index';
+
+const app = express();
+
+// Register the Market Intelligence MCP routes
+app.use('/api/market-intelligence', marketIntelligenceMcp);
+
+// Example request: GET /api/market-intelligence/trade-flow/0901/BRA/USA?year=2022&source=comtrade
+```
+
+## Testing
+
+You can test the Market Intelligence MCP using the provided test script:
+
+```bash
+npm run test:market-intelligence
+```
+
+This will start a test server that demonstrates the Market Intelligence MCP's capabilities.
+
+## Dependencies
+
+- External API connectors (Comtrade, TradeMap, WITS)
+- Environment variables for API keys should be set in `.env` file:
+  - `COMTRADE_API_KEY`
+  - `TRADE_MAP_API_KEY`
+  - `WITS_API_KEY`
 
 ## Features
 

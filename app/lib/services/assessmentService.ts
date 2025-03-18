@@ -137,15 +137,15 @@ export const assessmentQuestions: AssessmentQuestion[] = [
   },
   {
     id: 'target_markets',
-    prompt: "Which specific international markets are you interested in exporting to? We currently specialize in UAE, USA, and UK.",
+    prompt: "For the preliminary assessment report, we are focusing on UAE, USA, and UK. Would you like us to show you export opportunities in these markets?",
     extraction_patterns: {
       target_markets: /(.*)/i, // Capture the entire response
     },
     validation: (input: string) => {
-      if (input.length < 3) {
+      if (input.length < 2) {
         return { 
           valid: false, 
-          message: "Please let me know which markets you're interested in, even if they're not on our supported list." 
+          message: "Please let me know if you'd like to see export opportunities in UAE, USA, and UK." 
         };
       }
       return { valid: true };

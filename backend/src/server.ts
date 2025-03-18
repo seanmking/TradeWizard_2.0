@@ -4,11 +4,20 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
-import complianceMcpRoutes from './mcp/compliance-mcp';
 // Import routes from app.js
 import * as path from 'path';
 
 dotenv.config();
+
+// Set TEST_MODE for compliance MCP if not already set
+// This allows the Compliance MCP to use mock data instead of requiring a database connection
+if (!process.env.TEST_MODE) {
+  process.env.TEST_MODE = 'true';
+  console.log('TEST_MODE enabled for Compliance MCP');
+}
+
+// Import Compliance MCP routes after setting TEST_MODE
+import complianceMcpRoutes from './mcp/compliance-mcp';
 
 const app = express();
 
@@ -17,6 +26,8 @@ const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+console.log('Supabase client initialized successfully');
 
 // Middleware
 app.use(cors());
@@ -125,8 +136,8 @@ app.get('/api/table-test/:table', async (req: Request, res: Response) => {
   }
 });
 
-// Register MCP routes
-app.use('/api/mcp/compliance', complianceMcpRoutes);
+// Register MCP routes with the updated path
+app.use('/api/compliance', complianceMcpRoutes);
 
 // Routes will be added here
 

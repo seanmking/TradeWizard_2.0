@@ -24,8 +24,8 @@ if [ ! -d "node_modules" ]; then
   npm install
 fi
 
-# Start the scraper service
-npm run dev &
+# Start the scraper service with explicit port setting
+PORT=3001 npm run dev &
 SCRAPER_PID=$!
 echo "Scraper service started with PID: $SCRAPER_PID"
 echo $SCRAPER_PID > $SCRAPER_PID_FILE

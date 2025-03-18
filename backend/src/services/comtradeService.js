@@ -27,7 +27,7 @@ class ComtradeService {
    */
   async executePythonScript(scriptPath, args = []) {
     return new Promise((resolve, reject) => {
-      const pythonProcess = spawn('python3', [scriptPath, ...args]);
+      const pythonProcess = spawn('/usr/local/bin/python3', [scriptPath, ...args]);
       
       let stdout = '';
       let stderr = '';

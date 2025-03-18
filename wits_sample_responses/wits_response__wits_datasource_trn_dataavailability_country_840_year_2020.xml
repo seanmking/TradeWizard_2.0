@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<wits:datasource datasourcecode="TRN" datasourcename="WITS - UNTCTAD TRAINS" language="en" total="1" xmlns:wits="http://wits.worldbank.org">
+  <wits:dataavailability>
+    <wits:reporter countrycode="840" iso3Code="USA" isgroup="No" grouptype="N/A">
+      <wits:name>United States</wits:name>
+      <wits:year>2020</wits:year>
+      <wits:reporternernomenclature reporternernomenclaturecode="H5">Harmonized System 2017</wits:reporternernomenclature>
+      <wits:numberofpreferentialagreement>24</wits:numberofpreferentialagreement>
+      <wits:partnerlist>000;036;048;124;152;170;376;392;400;410;484;504;512;524;591;604;702;A41;B15;C08;C09;C67;N75;</wits:partnerlist>
+      <wits:isspecificdutyexpressionestimatedavailable>Yes</wits:isspecificdutyexpressionestimatedavailable>
+      <wits:notes />
+      <wits:lastupdateddate>2021/08/30</wits:lastupdateddate>
+    </wits:reporter>
+  </wits:dataavailability>
+</wits:datasource>

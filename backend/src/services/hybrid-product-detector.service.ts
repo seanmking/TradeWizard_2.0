@@ -1,250 +1,166 @@
-/**
- * Hybrid Product Detector Service
- * 
- * Combines DOM-based product detection with fallback to LLM-based analysis
- * when DOM methods have low confidence or detect few products.
- */
+import axios from 'axios';
+import cheerio from 'cheerio';
+import LLMProductAnalyzerService from './llm-product-analyzer.service';
+import Redis from 'ioredis';
 
-import { WebScraperService } from './web-scraper.service';
-import { DomProductDetectorService, ProductDetectionResult } from './dom-product-detector.service';
-import { ProductInfo } from '../types';
+class HybridProductDetectorService {
+  private llmAnalyzer: LLMProductAnalyzerService;
+  private redisClient: Redis;
 
-export interface HybridProductDetectionResult {
-  products: ProductInfo[];
-  confidence: number;
-  method: string;
-  metrics: {
-    detectionTime: number;
-    domConfidence?: number;
-    llmConfidence?: number;
-    usedLlm: boolean;
-    productCount: number;
-  };
-  url: string;
-}
-
-export class HybridProductDetectorService {
-  private webScraper: WebScraperService;
-  private domDetector: DomProductDetectorService;
-  
-  // Cache to store detection results by URL and avoid redundant processing
-  private cache: Map<string, { result: HybridProductDetectionResult, timestamp: number }> = new Map();
-  // Cache expiration time (24 hours)
-  private cacheExpirationMs = 24 * 60 * 60 * 1000;
-  
   constructor() {
-    this.webScraper = new WebScraperService();
-    this.domDetector = new DomProductDetectorService();
+    this.llmAnalyzer = new LLMProductAnalyzerService();
+    this.redisClient = new Redis(process.env.REDIS_URL);
   }
-  
-  /**
-   * Detect products from a URL using a hybrid approach
-   * @param url URL to analyze
-   * @param options Configuration options
-   * @returns Product detection results
-   */
-  public async detectProducts(
-    url: string,
-    options: {
-      useLlm?: boolean;
-      forceFresh?: boolean;
-      domConfidenceThreshold?: number;
-      minProducts?: number;
-    } = {}
-  ): Promise<HybridProductDetectionResult> {
-    const startTime = Date.now();
+
+  async detectProduct(url: string) {
+    // Check cache first
+    const cachedResult = await this.getCachedDetection(url);
+    if (cachedResult) return cachedResult;
+
+    // Attempt DOM-based detection
+    const domDetectionResult = await this.domBasedDetection(url);
     
-    // Set default options
-    const {
-      useLlm = true,
-      forceFresh = false,
-      domConfidenceThreshold = 0.6,
-      minProducts = 3
-    } = options;
-    
-    // Check cache first if not forcing fresh results
-    if (!forceFresh) {
-      const cachedResult = this.getCachedResult(url);
-      if (cachedResult) {
-        console.log(`Using cached product detection results for ${url}`);
-        return cachedResult;
+    // Determine detection confidence
+    const confidence = this.calculateConfidence(domDetectionResult);
+
+    // Enhance with LLM if confidence is low
+    let enhancedResult = domDetectionResult;
+    if (confidence < 0.7) {
+      try {
+        const llmClassification = await this.llmAnalyzer.classifyProduct(domDetectionResult);
+        enhancedResult = {
+          ...domDetectionResult,
+          llmEnhancement: llmClassification
+        };
+      } catch (error) {
+        console.warn('LLM enhancement failed', error);
       }
     }
-    
+
+    // Cache the result
+    await this.cacheDetection(url, enhancedResult);
+
+    return enhancedResult;
+  }
+
+  private async domBasedDetection(url: string) {
     try {
-      // First step: scrape the website
-      const html = await this.fetchWebsiteHtml(url);
-      
-      // Second step: analyze with DOM-based detector
-      const domResult = this.domDetector.detectProducts(html);
-      
-      // Initialize results with DOM detection
-      let products = domResult.products;
-      let confidence = domResult.confidence;
-      let method = domResult.method;
-      let usedLlm = false;
-      
-      // If DOM detection has low confidence or found few products,
-      // and LLM usage is enabled, try to enhance with LLM
-      if (useLlm && (domResult.confidence < domConfidenceThreshold || domResult.products.length < minProducts)) {
-        // For now, just log this as Phase 2 will implement LLM enhancement
-        console.log(`DOM detection had low confidence (${domResult.confidence}) or found few products (${domResult.products.length}). Would use LLM enhancement in Phase 2.`);
-        
-        // In Phase 2, we would call LLM-based analysis here and potentially merge results
-        // For now, we'll just use DOM results
+      const response = await axios.get(url);
+      const $ = cheerio.load(response.data);
+
+      // Multiple detection strategies
+      const strategies = [
+        this.detectViaSchemaOrg($),
+        this.detectViaECommercePatterns($),
+        this.detectViaImageTextPairs($)
+      ];
+
+      // Find first successful detection
+      for (const strategy of strategies) {
+        if (strategy) return strategy;
       }
-      
-      const endTime = Date.now();
-      
-      // Construct the final result
-      const result: HybridProductDetectionResult = {
-        products,
-        confidence,
-        method,
-        metrics: {
-          detectionTime: endTime - startTime,
-          domConfidence: domResult.confidence,
-          usedLlm,
-          productCount: products.length
-        },
-        url
+
+      // Fallback to generic extraction
+      return this.genericExtraction($);
+    } catch (error) {
+      console.error('Product detection error:', error);
+      throw new Error('Unable to detect product');
+    }
+  }
+
+  private detectViaSchemaOrg($: cheerio.Root) {
+    const schemaScript = $('script[type="application/ld+json"]').first().html();
+    if (schemaScript) {
+      try {
+        const schemaData = JSON.parse(schemaScript);
+        if (schemaData['@type'] === 'Product') {
+          return {
+            name: schemaData.name,
+            description: schemaData.description,
+            price: schemaData.offers?.price,
+            confidence: 0.9
+          };
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  private detectViaECommercePatterns($: cheerio.Root) {
+    // Look for common e-commerce product page patterns
+    const productTitle = $('h1.product-title, .product-name').first().text().trim();
+    const productDescription = $('div.product-description, .product-details').first().text().trim();
+    
+    if (productTitle) {
+      return {
+        name: productTitle,
+        description: productDescription,
+        confidence: 0.7
       };
-      
-      // Cache the result for future use
-      this.cacheResult(url, result);
-      
-      return result;
-    } catch (error: any) {
-      console.error(`Error detecting products from ${url}:`, error.message);
-      throw new Error(`Failed to detect products: ${error.message}`);
     }
+    return null;
   }
-  
-  /**
-   * Fetch website HTML content
-   * @param url URL to fetch
-   * @returns HTML content
-   */
-  private async fetchWebsiteHtml(url: string): Promise<string> {
-    try {
-      const websiteData = await this.webScraper.scrapeWebsite(url);
-      
-      // Simulate HTML content from the fetched data
-      // This is a temporary solution until we have proper HTML content
-      const html = `
-        <html>
-          <head>
-            <title>${websiteData.title}</title>
-            <meta name="description" content="${websiteData.description || ''}">
-            ${Object.entries(websiteData.metadata || {}).map(([name, content]) => 
-              `<meta name="${name}" content="${content}">`
-            ).join('\n')}
-          </head>
-          <body>
-            ${websiteData.content}
-          </body>
-        </html>
-      `;
-      
-      return html;
-    } catch (error: any) {
-      console.error(`Error fetching website HTML from ${url}:`, error.message);
-      throw new Error(`Failed to fetch website HTML: ${error.message}`);
+
+  private detectViaImageTextPairs($: cheerio.Root) {
+    // Find image-text pairs that suggest a product
+    const productImages = $('img[alt]:not([alt=""])');
+    
+    if (productImages.length > 0) {
+      return {
+        name: productImages.first().attr('alt') || 'Unnamed Product',
+        description: productImages.first().parent().text().trim(),
+        confidence: 0.6
+      };
     }
+    return null;
   }
-  
-  /**
-   * Get cached result for a URL if it exists and is not expired
-   * @param url URL to check in cache
-   * @returns Cached result or undefined if not found or expired
-   */
-  private getCachedResult(url: string): HybridProductDetectionResult | undefined {
-    const cached = this.cache.get(url);
-    
-    if (cached) {
-      const now = Date.now();
-      
-      // Check if cache is still valid
-      if (now - cached.timestamp < this.cacheExpirationMs) {
-        return cached.result;
-      } else {
-        // Cache expired, remove it
-        this.cache.delete(url);
-      }
-    }
-    
-    return undefined;
-  }
-  
-  /**
-   * Cache a detection result for a URL
-   * @param url URL to cache
-   * @param result Result to cache
-   */
-  private cacheResult(url: string, result: HybridProductDetectionResult): void {
-    this.cache.set(url, {
-      result,
-      timestamp: Date.now()
-    });
-    
-    // Implement cache size limiting
-    this.limitCacheSize();
-  }
-  
-  /**
-   * Limit the cache size to prevent memory issues
-   * Removes oldest entries if cache gets too large
-   */
-  private limitCacheSize(): void {
-    const maxCacheSize = 100; // Maximum number of entries in the cache
-    
-    if (this.cache.size > maxCacheSize) {
-      // Get and sort entries by timestamp
-      const entries = Array.from(this.cache.entries())
-        .sort((a, b) => a[1].timestamp - b[1].timestamp);
-      
-      // Remove oldest entries until we're back at the limit
-      const entriesToRemove = entries.slice(0, this.cache.size - maxCacheSize);
-      for (const [url] of entriesToRemove) {
-        this.cache.delete(url);
-      }
-    }
-  }
-  
-  /**
-   * Clear the cache
-   */
-  public clearCache(): void {
-    this.cache.clear();
-  }
-  
-  /**
-   * Get cache statistics
-   * @returns Cache size and hit rate
-   */
-  public getCacheStats(): { size: number, maxSize: number, expirationTimeHours: number } {
+
+  private genericExtraction($: cheerio.Root) {
+    // Most generic extraction as a last resort
     return {
-      size: this.cache.size,
-      maxSize: 100, // Same as maxCacheSize in limitCacheSize()
-      expirationTimeHours: this.cacheExpirationMs / (1000 * 60 * 60)
+      name: $('title').first().text().trim(),
+      description: $('meta[name="description"]').attr('content') || '',
+      confidence: 0.5
     };
   }
-  
-  /**
-   * Clean up expired cache entries
-   * @returns Number of entries removed
-   */
-  public cleanupCache(): number {
-    const now = Date.now();
-    let removedCount = 0;
-    
-    for (const [url, cached] of this.cache.entries()) {
-      if (now - cached.timestamp >= this.cacheExpirationMs) {
-        this.cache.delete(url);
-        removedCount++;
-      }
+
+  private calculateConfidence(detectionResult: any): number {
+    return detectionResult.confidence || 0.5;
+  }
+
+  private async getCachedDetection(url: string) {
+    const cachedResult = await this.redisClient.get(`product_detection:${url}`);
+    return cachedResult ? JSON.parse(cachedResult) : null;
+  }
+
+  private async cacheDetection(url: string, result: any) {
+    // Cache for 7 days
+    await this.redisClient.set(
+      `product_detection:${url}`, 
+      JSON.stringify(result), 
+      'EX', 
+      7 * 24 * 60 * 60
+    );
+  }
+
+  // Cache management methods
+  async clearCache() {
+    const keys = await this.redisClient.keys('product_detection:*');
+    if (keys.length > 0) {
+      await this.redisClient.del(...keys);
     }
-    
-    return removedCount;
+    return keys.length;
+  }
+
+  async getCacheStats() {
+    const keys = await this.redisClient.keys('product_detection:*');
+    return {
+      totalCachedItems: keys.length,
+      cacheSize: await Promise.all(
+        keys.map(key => this.redisClient.strlen(key))
+      ).then(sizes => sizes.reduce((a, b) => a + b, 0))
+    };
   }
 }
+
+export default HybridProductDetectorService;

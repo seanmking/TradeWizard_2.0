@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import productRoutes from './routes/productRoutes';
 import complianceRoutes from './routes/complianceRoutes';
+import marketRoutes from './routes/marketRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -17,6 +18,7 @@ app.use(express.json());
 // Routes
 app.use('/api/products', productRoutes);
 app.use('/api/compliance', complianceRoutes);
+app.use('/api/market', marketRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -25,7 +27,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     services: {
       productDetection: true,
-      complianceCheck: true
+      complianceCheck: true,
+      marketIntelligence: true
     }
   });
 });

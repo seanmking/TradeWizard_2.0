@@ -9,16 +9,46 @@ echo "=========================================="
 NEXTJS_PID_FILE="./.nextjs.pid"
 API_PID_FILE="./.api.pid"
 
+# 1. ONCE: Kill all existing processes with proper verification
+echo "Cleaning up existing processes..."
+if ! bash ./stop.sh; then
+    echo "❌ Initial cleanup failed"
+    exit 1
+fi
+
+# 2. Verify ports are free (with retries)
+echo "Verifying ports are available..."
+for port in 3000 3001 5002; do
+    for i in {1..3}; do
+        if lsof -i :$port > /dev/null 2>&1; then
+            echo "Port $port still in use, attempt $i of 3..."
+            sleep 2
+            # More aggressive cleanup on retries
+            kill -9 $(lsof -t -i:$port) 2>/dev/null || true
+        else
+            echo "✅ Port $port is available"
+            break
+        fi
+    done
+    
+    # Final check
+    if lsof -i :$port > /dev/null 2>&1; then
+        echo "❌ ERROR: Could not free port $port after multiple attempts"
+        echo "Please manually kill the process using:"
+        echo "lsof -ti:$port | xargs kill -9"
+        exit 1
+    fi
+done
+
 # Check for command line arguments
 MODE="run"
 TEST_TYPE=""
 
 # Process command line arguments
 if [ "$1" == "test" ]; then
-  MODE="test"
-  TEST_TYPE="$2"
-  
-  echo "Running in TEST mode: $TEST_TYPE"
+    MODE="test"
+    TEST_TYPE="$2"
+    echo "Running in TEST mode: $TEST_TYPE"
 fi
 
 # If we're in test mode, just run the tests and exit
@@ -103,102 +133,155 @@ if [ "$MODE" == "test" ]; then
   esac
 fi
 
-# First run the stop script to ensure clean state
-echo "Ensuring no existing processes are running..."
-bash ./stop.sh
-
-# Check for required dependencies
+# 3. Check and install dependencies
 echo "Checking for required dependencies..."
 if ! npm list axios --silent > /dev/null 2>&1; then
-  echo "⚠️  Dependencies missing: axios"
-  echo "Installing missing dependencies..."
-  npm install axios
-  if [ $? -ne 0 ]; then
-    echo "❌ Failed to install dependencies. Some functionality may not work."
-  else
-    echo "✅ Dependencies installed successfully!"
-  fi
+    echo "⚠️  Dependencies missing: axios"
+    echo "Installing missing dependencies..."
+    npm install axios
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to install dependencies. Some functionality may not work."
+    else
+        echo "✅ Dependencies installed successfully!"
+    fi
 else
-  echo "✅ All required dependencies are installed."
+    echo "✅ All required dependencies are installed."
 fi
 
-# Start the scraper service if it exists
+# 4. Check and start Redis
+echo "Checking Redis status..."
+if ! command -v redis-cli &> /dev/null; then
+    echo "⚠️  Redis is not installed"
+    echo "Installing Redis..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        brew install redis
+        if [ $? -ne 0 ]; then
+            echo "❌ Failed to install Redis. AI features may not work correctly."
+            exit 1
+        fi
+    else
+        echo "❌ Please install Redis manually for your operating system."
+        exit 1
+    fi
+fi
+
+if ! redis-cli ping &> /dev/null; then
+    echo "Starting Redis server..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        brew services start redis
+        if [ $? -ne 0 ]; then
+            echo "❌ Failed to start Redis. AI features may not work correctly."
+            exit 1
+        fi
+    else
+        redis-server &
+    fi
+    
+    # Wait for Redis to start
+    sleep 2
+    if redis-cli ping &> /dev/null; then
+        echo "✅ Redis server started successfully!"
+    else
+        echo "❌ Redis server failed to start. AI features may not work correctly."
+        exit 1
+    fi
+else
+    echo "✅ Redis server is already running"
+fi
+
+# 5. Start services in sequence, verifying each one
+echo "Starting services..."
+
+# Start scraper service if it exists
 if [ -d "tradewizard-scraper-service" ]; then
-  echo "Starting scraper microservice..."
-  
-  # Check if start-scraper.sh exists and is executable
-  if [ ! -f "tradewizard-scraper-service/start-scraper.sh" ]; then
-    echo "❌ start-scraper.sh not found in scraper service directory!"
-    echo "⚠️  Website analysis will use fallback mock data."
-  elif [ ! -x "tradewizard-scraper-service/start-scraper.sh" ]; then
-    echo "Making start-scraper.sh executable..."
-    chmod +x tradewizard-scraper-service/start-scraper.sh
-  fi
-  
-  # Ensure the stop-scraper.sh is also executable
-  if [ -f "tradewizard-scraper-service/stop-scraper.sh" ] && [ ! -x "tradewizard-scraper-service/stop-scraper.sh" ]; then
-    chmod +x tradewizard-scraper-service/stop-scraper.sh
-  fi
-  
-  # Check for required scraper dependencies 
-  echo "Checking scraper service dependencies..."
-  (cd tradewizard-scraper-service && npm install)
-  
-  # Try to start the scraper service and capture any errors
-  (cd tradewizard-scraper-service && ./start-scraper.sh)
-  
-  # Give the service a moment to start
-  sleep 2
-  
-  # Check if the scraper service actually started
-  if curl -s http://localhost:3001/health > /dev/null; then
-    echo "✅ Scraper service started and responding at http://localhost:3001"
-  else
-    echo "❌ Scraper service failed to start or is not responding"
-    echo "⚠️  Website analysis will use fallback mock data."
-    echo "Check logs in tradewizard-scraper-service/combined.log for details"
-  fi
-else
-  echo "⚠️  Scraper service directory not found. Website analysis will use fallback mock data."
+    echo "Starting scraper microservice..."
+    
+    # Ensure scripts are executable
+    chmod +x tradewizard-scraper-service/start-scraper.sh 2>/dev/null || true
+    chmod +x tradewizard-scraper-service/stop-scraper.sh 2>/dev/null || true
+    
+    # Install dependencies and start service
+    (cd tradewizard-scraper-service && npm install && ./start-scraper.sh)
+    
+    # Verify scraper started successfully
+    echo "Verifying scraper service..."
+    for i in {1..5}; do
+        if curl -s http://localhost:3001/health > /dev/null; then
+            echo "✅ Scraper service started and responding at http://localhost:3001"
+            break
+        fi
+        if [ $i -eq 5 ]; then
+            echo "❌ Scraper service failed to start"
+            echo "⚠️  Website analysis will use fallback mock data"
+        fi
+        sleep 2
+    done
 fi
 
-# Wait a moment for processes to terminate completely
-sleep 1
-
-# Start Next.js development server without opening browser
-echo "Starting Next.js development server..."
+# Start Next.js development server
+echo "Starting Next.js development server on port 3000..."
 npm run dev -- -p 3000 &
 NEXTJS_PID=$!
-echo "Next.js server started with PID: $NEXTJS_PID"
 echo $NEXTJS_PID > $NEXTJS_PID_FILE
 
-# If you have a backend API, start it here
-echo "Starting backend API server..."
-cd backend && npm run dev &
+# Verify Next.js started successfully
+echo "Verifying Next.js server..."
+for i in {1..5}; do
+    if curl -s http://localhost:3000 > /dev/null; then
+        echo "✅ Next.js server started successfully"
+        break
+    fi
+    if [ $i -eq 5 ]; then
+        echo "❌ Next.js server failed to start"
+        exit 1
+    fi
+    sleep 2
+done
+
+# Start backend API
+echo "Starting backend API server on port 5002..."
+cd backend && PORT=5002 npm run dev &
 API_PID=$!
-echo "Backend API server started with PID: $API_PID"
 echo $API_PID > $API_PID_FILE
 cd ..
 
-# Register trap to handle termination signals
+# Verify API started successfully
+echo "Verifying backend API..."
+for i in {1..5}; do
+    if curl -s http://localhost:5002/health > /dev/null; then
+        echo "✅ Backend API started successfully"
+        break
+    fi
+    if [ $i -eq 5 ]; then
+        echo "❌ Backend API failed to start"
+        exit 1
+    fi
+    sleep 2
+done
+
+# Register cleanup for termination
 cleanup() {
-  echo "Received termination signal. Shutting down..."
-  # Stop the scraper service if running
-  if [ -d "tradewizard-scraper-service" ]; then
-    cd tradewizard-scraper-service && ./stop-scraper.sh && cd ..
-  fi
-  bash ./stop.sh
-  exit 0
+    echo "Received termination signal. Shutting down..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        brew services stop redis
+    else
+        redis-cli shutdown
+    fi
+    if [ -d "tradewizard-scraper-service" ]; then
+        cd tradewizard-scraper-service && ./stop-scraper.sh && cd ..
+    fi
+    bash ./stop.sh
+    exit 0
 }
 
-# Set up trap for common termination signals
 trap cleanup SIGINT SIGTERM
 
 echo ""
-echo "All processes started!"
+echo "All processes started successfully!"
 echo "Application is running at: http://localhost:3000"
 echo "Scraper service running at: http://localhost:3001"
 echo "Backend API running at: http://localhost:5002"
+echo "Redis server running at: localhost:6379"
 echo "To stop all processes, run: ./stop.sh"
 echo "To run tests, use: ./start.sh test [test-type]"
 echo "Available test types: wits-api, wits-provider, scraper, api, sarah, backend, website-analysis, all"

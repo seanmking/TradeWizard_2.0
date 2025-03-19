@@ -8,43 +8,80 @@
  */
 
 import * as cheerio from 'cheerio';
+import type { CheerioAPI } from 'cheerio';
+import type { Element } from 'domhandler';
 import { EnhancedProduct } from '../types/product-detection.types';
+
+interface ProductPattern {
+  element: Element;
+  frequency: number;
+}
+
+interface ImageTextPair {
+  image: Element;
+  text: string;
+  score: number;
+}
+
+interface DetectedPattern {
+  type: string;
+  count: number;
+}
+
+type CheerioRoot = ReturnType<typeof cheerio.load>;
+type PatternType = 'repeatingPatterns' | 'imageTextPairs' | 'pricePatterns';
+
+interface TagElement {
+  type: 'tag' | 'script' | 'style';
+  tagName: string;
+  name: string;
+  attribs: { [attr: string]: string };
+  children: Element[];
+  parent: Element | null;
+  prev: Element | null;
+  next: Element | null;
+  nodeValue: string;
+}
+
+function isTagElement(element: Element): element is TagElement & Element {
+  return (element.type === 'tag' || element.type === 'script' || element.type === 'style') &&
+         'tagName' in element &&
+         'name' in element &&
+         'attribs' in element;
+}
 
 /**
  * DOM Product Detector for SME websites
  * Focuses on detecting products in non-standard e-commerce websites
  */
-export class DomProductDetector {
-  /**
-   * Detect products from HTML content
-   */
-  public detectProducts(html: string): {
+export class DOMProductDetector {
+  private $: CheerioAPI;
+
+  constructor(html: string) {
+    this.$ = cheerio.load(html);
+  }
+
+  public detectProducts(): {
     products: EnhancedProduct[];
-    patterns: any[];
+    patterns: DetectedPattern[];
   } {
-    const $ = cheerio.load(html);
     const products: EnhancedProduct[] = [];
-    const patterns = [];
+    const patterns: DetectedPattern[] = [];
     
     // Apply detection strategies
-    const repeatingPatterns = this.detectRepeatingPatterns($);
-    const imageTextPairs = this.detectImageTextPairs($);
-    const pricePatterns = this.detectPricePatterns($);
+    const repeatingPatterns = this.detectRepeatingPatterns();
+    const imageTextPairs = this.detectImageTextPairs();
+    const pricePatterns = this.detectPricePatterns();
     
     // Process repeating patterns (likely product grids/lists)
     if (repeatingPatterns.length > 0) {
       patterns.push({ type: 'repeatingPatterns', count: repeatingPatterns.length });
       
       repeatingPatterns.forEach(pattern => {
-        const elements = pattern.elements;
-        for (const element of elements) {
-          const $el = $(element);
-          
-          // Extract product details from the element
-          const product = this.extractProductFromElement($, $el, 'pattern-based');
-          if (product) {
-            products.push(product);
-          }
+        const $el = cheerio.load(pattern.element);
+        const product = this.extractProductFromElement($el, 'pattern-based');
+        if (product) {
+          products.push(product);
         }
       });
     }
@@ -54,13 +91,9 @@ export class DomProductDetector {
       patterns.push({ type: 'imageTextPairs', count: imageTextPairs.length });
       
       imageTextPairs.forEach(pair => {
-        // Extract product from image-text pair
-        const imageEl = pair.imageElement;
-        const textEl = pair.textElement;
-        
-        const $container = $(imageEl).parent();
+        const $container = cheerio.load(pair.image).parent();
         if ($container.length) {
-          const product = this.extractProductFromElement($, $container, 'image-text');
+          const product = this.extractProductFromElement($container, 'image-text');
           if (product) {
             products.push(product);
           }
@@ -69,23 +102,19 @@ export class DomProductDetector {
     }
     
     // Enhance products with pricing if available
-    if (pricePatterns.size > 0) {
-      patterns.push({ type: 'pricePatterns', count: pricePatterns.size });
+    if (pricePatterns.length > 0) {
+      patterns.push({ type: 'pricePatterns', count: pricePatterns.length });
       
       products.forEach(product => {
-        // Try to associate a price with this product based on DOM proximity
-        const priceEl = this.findClosestPriceElement($, product.name);
-        if (priceEl && pricePatterns.has(priceEl)) {
-          product.price = pricePatterns.get(priceEl);
+        const priceEl = this.findClosestPriceElement(product.name);
+        if (priceEl && pricePatterns.includes(priceEl)) {
+          product.price = pricePatterns.find(el => el === priceEl);
         }
       });
     }
     
-    // Deduplicate products
-    const uniqueProducts = this.deduplicateProducts(products);
-    
     return {
-      products: uniqueProducts,
+      products: this.deduplicateProducts(products),
       patterns
     };
   }
@@ -93,104 +122,72 @@ export class DomProductDetector {
   /**
    * Detect repeating structural patterns that may indicate product grids or lists
    */
-  private detectRepeatingPatterns($: cheerio.CheerioAPI): any[] {
-    const patterns = [];
-    
-    // Find potential container elements
-    $('div, section, ul, [class*="grid"], [class*="row"], [class*="products"], [class*="list"]').each((_, container) => {
-      const $container = $(container);
-      const children = $container.children();
-      
-      // Need at least 2 children to identify a pattern
-      if (children.length < 2) return;
-      
-      // Check if children have similar structure
-      const similarityScore = this.calculateStructuralSimilarity($, children);
-      
-      if (similarityScore > 0.7) {  // 70% similarity threshold
-        const hasImages = this.containsImages($, children);
-        const hasPrices = this.containsPricePatterns($, children);
-        
-        // Product indicators boost the confidence
-        const confidence = similarityScore * (hasImages ? 1.2 : 0.8) * (hasPrices ? 1.3 : 0.9);
-        
-        if (confidence > 0.6) {
-          patterns.push({
-            container: container,
-            elements: children.toArray(),
-            confidence,
-            hasImages,
-            hasPrices
-          });
-        }
-      }
+  public detectRepeatingPatterns(): ProductPattern[] {
+    const patterns: ProductPattern[] = [];
+    const elementSignatures = new Map<string, number>();
+
+    this.$('*').each(function(this: Element): void {
+      const signature = generateStructureSignature(this);
+      elementSignatures.set(signature, (elementSignatures.get(signature) || 0) + 1);
     });
-    
-    // Sort by confidence (highest first)
-    return patterns.sort((a, b) => b.confidence - a.confidence);
+
+    // Convert to array and sort by frequency
+    Array.from(elementSignatures.entries())
+      .filter(([_, freq]) => freq > 1)
+      .sort(([_, a], [_, b]) => b - a)
+      .forEach(([signature, frequency]) => {
+        // Find first element matching this signature
+        this.$('*').each(function(this: Element): boolean {
+          if (generateStructureSignature(this) === signature) {
+            patterns.push({ element: this, frequency });
+            return false; // Break the loop
+          }
+          return true;
+        });
+      });
+
+    return patterns;
   }
   
   /**
    * Detect image-text pairs that likely represent products
    */
-  private detectImageTextPairs($: cheerio.CheerioAPI): any[] {
-    const pairs = [];
-    
-    // Find images with certain characteristics
-    $('img[src]:not([src=""])').each((_, img) => {
-      const $img = $(img);
-      const imgSize = this.estimateImageSize($img);
+  public detectImageTextPairs(): ImageTextPair[] {
+    const pairs: ImageTextPair[] = [];
+
+    this.$('img').each(function(this: Element): void {
+      const imgElement = this;
+      const relatedText = findClosestText(imgElement);
       
-      // Skip tiny icons or very large images
-      if (imgSize < 50 || imgSize > 800) return;
-      
-      // Find related text content close to the image
-      const relatedText = this.findRelatedText($, $img);
-      if (!relatedText) return;
-      
-      // Score the pair based on characteristics
-      const confidence = this.scoreImageTextPair($, $img, relatedText);
-      
-      if (confidence > 0.5) {
+      if (relatedText) {
+        const score = scoreImageTextPair(imgElement);
         pairs.push({
-          imageElement: img,
-          textElement: relatedText,
-          confidence
+          image: imgElement,
+          text: relatedText,
+          score
         });
       }
     });
-    
-    return pairs.sort((a, b) => b.confidence - a.confidence);
+
+    return pairs.sort((a, b) => b.score - a.score);
   }
   
   /**
    * Detect price patterns in the document
    */
-  private detectPricePatterns($: cheerio.CheerioAPI): Map<any, string> {
-    const priceMap = new Map();
-    
-    // Common price patterns
-    const priceRegex = /(?:USD|£|€|\$|ZAR|R)?\s*\d+(?:,\d{3})*(?:\.\d{2})?/gi;
-    
-    $('*:contains("$"), *:contains("USD"), *:contains("£"), *:contains("€"), *:contains("ZAR"), *:contains("R")').each((_, el) => {
-      const text = $(el).text().trim();
-      const matches = text.match(priceRegex);
-      
-      if (matches && matches[0]) {
-        const price = this.normalizePrice(matches[0]);
-        if (price) {
-          priceMap.set(el, price);
-        }
-      }
-    });
-    
-    return priceMap;
+  public detectPricePatterns(): Element[] {
+    return this.$('*')
+      .filter(function(this: Element): boolean {
+        const text = this.type === 'tag' ? this.children.map(c => c.data).join('').trim() : '';
+        return /\$\d+(\.\d{2})?|\d+(\.\d{2})?\s*(USD|EUR|GBP)/.test(text);
+      })
+      .toArray();
   }
   
   /**
    * Extract product details from a DOM element
    */
-  private extractProductFromElement($: cheerio.CheerioAPI, $el: cheerio.Cheerio, detectionMethod: string): EnhancedProduct | null {
+  private extractProductFromElement($el: Cheerio<Element>, detectionMethod: string): EnhancedProduct | null {
     // Extract product name (check multiple common selectors)
     let name = $el.find('h1, h2, h3, h4, .title, .name, .product-title, .product-name').first().text().trim();
     if (!name) {
@@ -215,8 +212,8 @@ export class DomProductDetector {
     
     // Extract image URLs
     const images: string[] = [];
-    $el.find('img[src]').each((_, img) => {
-      const src = $(img).attr('src');
+    $el.find('img[src]').each((index: number, img: Element) => {
+      const src = cheerio.load(img).attr('src');
       if (src && !src.includes('data:image')) {
         images.push(src);
       }
@@ -233,8 +230,8 @@ export class DomProductDetector {
     const attributes: Record<string, string> = {};
     
     // Look for table rows or definition lists with attributes
-    $el.find('tr, dt, .attribute, [class*="spec"]').each((_, attrEl) => {
-      const $attrEl = $(attrEl);
+    $el.find('tr, dt, .attribute, [class*="spec"]').each((index: number, attrEl: Element) => {
+      const $attrEl = cheerio.load(attrEl);
       const key = $attrEl.find('th, dt, .label').text().trim();
       const value = $attrEl.find('td, dd, .value').text().trim();
       
@@ -249,112 +246,80 @@ export class DomProductDetector {
       images,
       url,
       attributes,
-      confidence: 0.7, // Base confidence score
+      confidence: 0.8,
       detectionMethod
     };
   }
   
   /**
-   * Helper method to calculate structural similarity between elements
+   * Calculate structural similarity between elements
    */
-  private calculateStructuralSimilarity($: cheerio.CheerioAPI, children: cheerio.Cheerio): number {
+  private calculateStructuralSimilarity($container: Cheerio<Element>): number {
+    const children = $container.children();
     if (children.length < 2) return 0;
-    
-    const firstChild = children.first();
-    const firstSignature = this.generateStructureSignature($, firstChild);
-    
-    let similarityCount = 0;
-    
-    children.slice(1).each((_, child) => {
-      const $child = $(child);
-      const signature = this.generateStructureSignature($, $child);
-      
-      // Calculate similarity between signatures
-      const similarity = this.compareSignatures(firstSignature, signature);
-      if (similarity > 0.7) {
-        similarityCount++;
-      }
+
+    const firstSignature = generateStructureSignature($container.children()[0]);
+    const similarities = children.toArray().map((element: Element) => {
+      const signature = generateStructureSignature(cheerio.load(element));
+      return calculateJaccardSimilarity(firstSignature, signature);
     });
-    
-    return similarityCount / (children.length - 1);
+
+    return similarities.reduce((sum: number, sim: number) => sum + sim, 0) / similarities.length;
   }
   
   /**
-   * Generate a structural signature for DOM comparison
+   * Generate a signature for DOM structure comparison
    */
-  private generateStructureSignature($: cheerio.CheerioAPI, $element: cheerio.Cheerio): string {
-    // Create a signature based on element type, classes, and child structure
-    const tagName = $element.prop('tagName')?.toLowerCase() || '';
-    const hasImage = $element.find('img').length > 0;
-    const hasHeading = $element.find('h1, h2, h3, h4, h5, h6').length > 0;
-    const hasPrice = $element.text().match(/\$|USD|£|€|ZAR|R/) !== null;
-    
-    // Child elements count by type (simplified)
-    let childSignature = '';
-    $element.children().each((_, child) => {
-      childSignature += $(child).prop('tagName')?.toLowerCase()[0] || '';
-    });
-    
-    return `${tagName}-${hasImage ? 'i' : ''}-${hasHeading ? 'h' : ''}-${hasPrice ? 'p' : ''}-${childSignature}`;
+  private generateStructureSignature(element: Element): string {
+    const tagName = element.tagName?.toLowerCase() || '';
+    const classes = element.attribs?.class?.split(/\s+/).filter(Boolean) || [];
+    return `${tagName}${classes.length ? '.' + classes.join('.') : ''}`;
   }
   
   /**
-   * Compare two structure signatures for similarity
+   * Calculate Jaccard similarity between two arrays
    */
-  private compareSignatures(signature1: string, signature2: string): number {
-    if (signature1 === signature2) return 1.0;
-    
-    // Simple similarity metric
-    const parts1 = signature1.split('-');
-    const parts2 = signature2.split('-');
-    
-    let matchCount = 0;
-    const totalParts = Math.max(parts1.length, parts2.length);
-    
-    for (let i = 0; i < Math.min(parts1.length, parts2.length); i++) {
-      if (parts1[i] === parts2[i]) {
-        matchCount++;
-      }
-    }
-    
-    return matchCount / totalParts;
+  private calculateJaccardSimilarity(arr1: string[], arr2: string[]): number {
+    const set1 = new Set(arr1);
+    const set2 = new Set(arr2);
+    const intersection = new Set([...set1].filter(x => set2.has(x)));
+    const union = new Set([...set1, ...set2]);
+    return intersection.size / union.size;
   }
   
   /**
    * Check if a collection of elements contains images
    */
-  private containsImages($: cheerio.CheerioAPI, children: cheerio.Cheerio): boolean {
-    let imageCount = 0;
-    
-    children.each((_, child) => {
-      if ($(child).find('img').length > 0) {
-        imageCount++;
+  public containsImages(): boolean {
+    const images = this.$('img');
+    let hasImages = false;
+
+    images.each(function(this: Element, _i: number, _el: Element): void {
+      if (this.tagName === 'img') {
+        hasImages = true;
+        return false; // Break the loop
       }
     });
-    
-    return imageCount >= children.length * 0.5; // At least 50% have images
+
+    return images.length > 0 || hasImages;
   }
   
   /**
    * Check if a collection of elements contains price patterns
    */
-  private containsPricePatterns($: cheerio.CheerioAPI, children: cheerio.Cheerio): boolean {
-    let priceCount = 0;
-    const priceRegex = /(?:USD|£|€|\$|ZAR|R)?\s*\d+(?:,\d{3})*(?:\.\d{2})?/;
-    
-    children.each((_, child) => {
-      if (priceRegex.test($(child).text())) {
-        priceCount++;
-      }
+  public containsPricePatterns(): boolean {
+    const priceElements = this.$('*').filter(function(this: Element): boolean {
+      const text = this.type === 'tag' ? this.children.map(c => c.data).join('').trim() : '';
+      return /\$\d+(\.\d{2})?|\d+(\.\d{2})?\s*(USD|EUR|GBP)/.test(text);
     });
-    
-    return priceCount >= children.length * 0.3; // At least 30% have prices
+
+    return priceElements.length > 0;
   }
   
   /**
    * Estimate the visual size of an image from its attributes
    */
-  private estimateImageSize($img: cheerio.Cheerio): number {
+  private estimateImageSize($img: Cheerio<Element>): number {
     const width = parseInt($img.attr('width') || '0', 10);
     const height = parseInt($img.attr('height') || '0', 10);
     
@@ -378,82 +343,52 @@ export class DomProductDetector {
   /**
    * Find text content related to an image
    */
-  private findRelatedText($: cheerio.CheerioAPI, $img: cheerio.Cheerio): any {
-    // Check for text in the same parent container
-    const $parent = $img.parent();
-    const parentText = $parent.clone().children('img').remove().end().text().trim();
-    
-    if (parentText) {
-      return $parent[0];
-    }
-    
-    // Check for adjacent heading or paragraph
-    const $next = $img.next('h1, h2, h3, h4, p, .title, .name');
-    if ($next.length && $next.text().trim()) {
-      return $next[0];
-    }
-    
-    // Check for elements in the grandparent container
-    const $grandparent = $parent.parent();
-    if ($grandparent.length) {
-      const $heading = $grandparent.find('h1, h2, h3, h4, .title, .name').first();
-      if ($heading.length && $heading.text().trim()) {
-        return $heading[0];
+  public findRelatedText(selector: string): string[] {
+    const results: string[] = [];
+
+    this.$(selector).each(function(this: Element): void {
+      const parentEl = this.parent;
+      if (parentEl && parentEl.type === 'tag') {
+        const text = parentEl.children.map(c => c.data).join('').trim();
+        if (text) {
+          results.push(text);
+        }
       }
-      
-      const $paragraph = $grandparent.find('p').first();
-      if ($paragraph.length && $paragraph.text().trim()) {
-        return $paragraph[0];
-      }
-    }
-    
-    return null;
+    });
+
+    return results;
   }
   
   /**
    * Score an image-text pair for product likelihood
    */
-  private scoreImageTextPair($: cheerio.CheerioAPI, $img: cheerio.Cheerio, textElement: any): number {
-    const $text = $(textElement);
-    let score = 0.5; // Base score
-    
-    // Image with good dimensions is more likely a product image
-    const imgSize = this.estimateImageSize($img);
-    if (imgSize >= 100 && imgSize <= 500) {
-      score += 0.1;
+  private scoreImageTextPair(image: Element): number {
+    let score = 0;
+
+    // Score based on image attributes
+    const alt = image.attribs?.alt || '';
+    const title = image.attribs?.title || '';
+    const src = image.attribs?.src || '';
+
+    // Check if attributes contain meaningful content
+    if (alt && !/^(image|photo|picture|img|\d+)$/i.test(alt)) score += 2;
+    if (title && !/^(image|photo|picture|img|\d+)$/i.test(title)) score += 2;
+    if (src && !/icon|logo|banner/i.test(src)) score += 1;
+
+    // Score based on parent element characteristics
+    if (image.parent?.type === 'tag') {
+      const parentClasses = image.parent.attribs?.class || '';
+      if (/product|item|thumbnail/i.test(parentClasses)) score += 2;
     }
-    
-    // Image with an alt attribute is more likely a product
-    if ($img.attr('alt')) {
-      score += 0.1;
-    }
-    
-    // Text in a heading is more likely a product name
-    if (textElement.tagName && /^h[1-6]$/i.test(textElement.tagName)) {
-      score += 0.15;
-    }
-    
-    // Text containing price patterns is more likely a product
-    const text = $text.text();
-    if (/(?:USD|£|€|\$|ZAR|R)?\s*\d+(?:,\d{3})*(?:\.\d{2})?/.test(text)) {
-      score += 0.2;
-    }
-    
-    // Common product indicator words
-    const productWords = /buy|add to cart|product|item|purchase|order|shop/i;
-    if (productWords.test(text) || productWords.test($text.parent().text())) {
-      score += 0.15;
-    }
-    
-    return Math.min(1.0, score); // Cap at 1.0
+
+    return score;
   }
   
   /**
    * Find the closest price element to a product name
    */
-  private findClosestPriceElement($: cheerio.CheerioAPI, productName: string): any {
-    // This is a simplified implementation
-    // A real implementation would use DOM traversal to find the closest price element
+  private findClosestPriceElement(productName: string): Element | null {
+    // Implementation would go here
     return null;
   }
   
@@ -466,48 +401,51 @@ export class DomProductDetector {
   }
   
   /**
-   * Deduplicate products based on name similarity
+   * Deduplicate products based on name and URL similarity
    */
   private deduplicateProducts(products: EnhancedProduct[]): EnhancedProduct[] {
-    const uniqueProducts: EnhancedProduct[] = [];
-    const nameMap = new Map<string, boolean>();
+    const uniqueProducts = new Map<string, EnhancedProduct>();
     
-    for (const product of products) {
-      // Create a normalized name for comparison
-      const normalizedName = product.name.toLowerCase().trim();
-      
-      // Skip if we've seen a very similar name
-      let isDuplicate = false;
-      nameMap.forEach((_, existingName) => {
-        if (this.calculateStringSimilarity(normalizedName, existingName) > 0.8) {
-          isDuplicate = true;
+    products.forEach(product => {
+      const key = `${product.name}-${product.url}`;
+      if (!uniqueProducts.has(key) || 
+          (product.confidence || 0) > (uniqueProducts.get(key)?.confidence || 0)) {
+        uniqueProducts.set(key, product);
+      }
+    });
+    
+    return Array.from(uniqueProducts.values());
+  }
+}
+
+// Helper functions
+function findClosestText(element: Element): string {
+  if (!element.parent || element.parent.type !== 'tag') {
+    return '';
+  }
+
+  const siblings = element.parent.children.filter(node => 
+    node.type === 'text' || (node.type === 'tag' && node !== element)
+  );
+
+  let closestText = '';
+  let minDistance = Infinity;
+
+  siblings.forEach(sibling => {
+    if (sibling.type === 'text' && sibling.data) {
+      const text = sibling.data.trim();
+      if (text) {
+        const distance = Math.abs(
+          element.parent!.children.indexOf(element) - 
+          element.parent!.children.indexOf(sibling)
+        );
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestText = text;
         }
-      });
-      
-      if (!isDuplicate) {
-        nameMap.set(normalizedName, true);
-        uniqueProducts.push(product);
       }
     }
-    
-    return uniqueProducts;
-  }
-  
-  /**
-   * Calculate string similarity using Levenshtein distance
-   */
-  private calculateStringSimilarity(str1: string, str2: string): number {
-    if (str1 === str2) return 1.0;
-    
-    // Simple case: direct substring
-    if (str1.includes(str2) || str2.includes(str1)) {
-      const longerLength = Math.max(str1.length, str2.length);
-      const shorterLength = Math.min(str1.length, str2.length);
-      return shorterLength / longerLength;
-    }
-    
-    // For more complex cases, a proper Levenshtein implementation would go here
-    // This is simplified for brevity
-    return 0.0;
-  }
+  });
+
+  return closestText;
 }

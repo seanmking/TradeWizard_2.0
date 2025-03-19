@@ -8,17 +8,17 @@
  */
 
 import * as cheerio from 'cheerio';
-import type { CheerioAPI } from 'cheerio';
-import type { Element } from 'domhandler';
+import type { CheerioAPI, Cheerio, Element, AnyNode } from 'cheerio';
+import type { Element as DomHandlerElement } from 'domhandler';
 import { EnhancedProduct } from '../types/product-detection.types';
 
 interface ProductPattern {
-  element: Element;
+  element: DomHandlerElement;
   frequency: number;
 }
 
 interface ImageTextPair {
-  image: Element;
+  image: DomHandlerElement;
   text: string;
   score: number;
 }
@@ -28,26 +28,34 @@ interface DetectedPattern {
   count: number;
 }
 
-type CheerioRoot = ReturnType<typeof cheerio.load>;
-type PatternType = 'repeatingPatterns' | 'imageTextPairs' | 'pricePatterns';
-
-interface TagElement {
+interface TagElement extends DomHandlerElement {
   type: 'tag' | 'script' | 'style';
   tagName: string;
   name: string;
   attribs: { [attr: string]: string };
-  children: Element[];
-  parent: Element | null;
-  prev: Element | null;
-  next: Element | null;
+  children: DomHandlerElement[];
+  parent: DomHandlerElement | null;
+  prev: DomHandlerElement | null;
+  next: DomHandlerElement | null;
   nodeValue: string;
 }
 
-function isTagElement(element: Element): element is TagElement & Element {
+function isTagElement(element: DomHandlerElement): element is TagElement {
   return (element.type === 'tag' || element.type === 'script' || element.type === 'style') &&
          'tagName' in element &&
          'name' in element &&
          'attribs' in element;
+}
+
+/**
+ * Generate a structure signature for DOM elements
+ */
+function generateStructureSignature(element: DomHandlerElement): string {
+  if (!isTagElement(element)) return '';
+  
+  const tagName = element.tagName?.toLowerCase() || '';
+  const classes = element.attribs?.class?.split(/\s+/).filter(Boolean) || [];
+  return `${tagName}${classes.length ? '.' + classes.join('.') : ''}`;
 }
 
 /**
@@ -78,8 +86,8 @@ export class DOMProductDetector {
       patterns.push({ type: 'repeatingPatterns', count: repeatingPatterns.length });
       
       repeatingPatterns.forEach(pattern => {
-        const $el = cheerio.load(pattern.element);
-        const product = this.extractProductFromElement($el, 'pattern-based');
+        const $el = cheerio.load(pattern.element as any);
+        const product = this.extractProductFromElement($el.root(), 'pattern-based');
         if (product) {
           products.push(product);
         }
@@ -91,9 +99,9 @@ export class DOMProductDetector {
       patterns.push({ type: 'imageTextPairs', count: imageTextPairs.length });
       
       imageTextPairs.forEach(pair => {
-        const $container = cheerio.load(pair.image).parent();
-        if ($container.length) {
-          const product = this.extractProductFromElement($container, 'image-text');
+        const $parent = this.$(pair.image).parent();
+        if ($parent.length) {
+          const product = this.extractProductFromElement($parent, 'image-text');
           if (product) {
             products.push(product);
           }
@@ -126,8 +134,8 @@ export class DOMProductDetector {
     const patterns: ProductPattern[] = [];
     const elementSignatures = new Map<string, number>();
 
-    this.$('*').each(function(this: Element): void {
-      const signature = generateStructureSignature(this);
+    this.$('*').each((_index: number, element: DomHandlerElement) => {
+      const signature = generateStructureSignature(element);
       elementSignatures.set(signature, (elementSignatures.get(signature) || 0) + 1);
     });
 
@@ -137,9 +145,11 @@ export class DOMProductDetector {
       .sort(([_, a], [_, b]) => b - a)
       .forEach(([signature, frequency]) => {
         // Find first element matching this signature
-        this.$('*').each(function(this: Element): boolean {
-          if (generateStructureSignature(this) === signature) {
-            patterns.push({ element: this, frequency });
+        let found = false;
+        this.$('*').each((_index: number, element: DomHandlerElement) => {
+          if (!found && generateStructureSignature(element) === signature) {
+            patterns.push({ element, frequency });
+            found = true;
             return false; // Break the loop
           }
           return true;
@@ -155,12 +165,12 @@ export class DOMProductDetector {
   public detectImageTextPairs(): ImageTextPair[] {
     const pairs: ImageTextPair[] = [];
 
-    this.$('img').each(function(this: Element): void {
-      const imgElement = this;
+    this.$('img').each((_index: number, element: DomHandlerElement) => {
+      const imgElement = element;
       const relatedText = findClosestText(imgElement);
       
       if (relatedText) {
-        const score = scoreImageTextPair(imgElement);
+        const score = this.scoreImageTextPair(imgElement);
         pairs.push({
           image: imgElement,
           text: relatedText,
@@ -175,10 +185,20 @@ export class DOMProductDetector {
   /**
    * Detect price patterns in the document
    */
-  public detectPricePatterns(): Element[] {
+  public detectPricePatterns(): DomHandlerElement[] {
     return this.$('*')
-      .filter(function(this: Element): boolean {
-        const text = this.type === 'tag' ? this.children.map(c => c.data).join('').trim() : '';
+      .filter((_index: number, element: DomHandlerElement) => {
+        if (!isTagElement(element)) return false;
+        
+        let text = '';
+        if (element.children) {
+          text = element.children
+            .filter(child => child.type === 'text' && child.data)
+            .map(child => (child as any).data || '')
+            .join('')
+            .trim();
+        }
+        
         return /\$\d+(\.\d{2})?|\d+(\.\d{2})?\s*(USD|EUR|GBP)/.test(text);
       })
       .toArray();
@@ -187,12 +207,14 @@ export class DOMProductDetector {
   /**
    * Extract product details from a DOM element
    */
-  private extractProductFromElement($el: Cheerio<Element>, detectionMethod: string): EnhancedProduct | null {
+  private extractProductFromElement($el: Cheerio<AnyNode>, detectionMethod: string): EnhancedProduct | null {
     // Extract product name (check multiple common selectors)
     let name = $el.find('h1, h2, h3, h4, .title, .name, .product-title, .product-name').first().text().trim();
     if (!name) {
       // Try getting text directly if no heading found
-      name = $el.clone().children('img, button').remove().end().text().trim();
+      const $clone = $el.clone();
+      $clone.find('img, button').remove();
+      name = $clone.text().trim();
     }
     
     // If still no name, try the alt text of an image
@@ -212,8 +234,8 @@ export class DOMProductDetector {
     
     // Extract image URLs
     const images: string[] = [];
-    $el.find('img[src]').each((index: number, img: Element) => {
-      const src = cheerio.load(img).attr('src');
+    $el.find('img[src]').each((_index: number, img: DomHandlerElement) => {
+      const src = this.$(img).attr('src');
       if (src && !src.includes('data:image')) {
         images.push(src);
       }
@@ -230,8 +252,8 @@ export class DOMProductDetector {
     const attributes: Record<string, string> = {};
     
     // Look for table rows or definition lists with attributes
-    $el.find('tr, dt, .attribute, [class*="spec"]').each((index: number, attrEl: Element) => {
-      const $attrEl = cheerio.load(attrEl);
+    $el.find('tr, dt, .attribute, [class*="spec"]').each((_index: number, attrEl: DomHandlerElement) => {
+      const $attrEl = this.$(attrEl);
       const key = $attrEl.find('th, dt, .label').text().trim();
       const value = $attrEl.find('td, dd, .value').text().trim();
       
@@ -258,22 +280,16 @@ export class DOMProductDetector {
     const children = $container.children();
     if (children.length < 2) return 0;
 
-    const firstSignature = generateStructureSignature($container.children()[0]);
-    const similarities = children.toArray().map((element: Element) => {
-      const signature = generateStructureSignature(cheerio.load(element));
-      return calculateJaccardSimilarity(firstSignature, signature);
+    const childElements = children.toArray();
+    if (childElements.length === 0) return 0;
+
+    const firstSignature = generateStructureSignature(childElements[0]);
+    const similarities = childElements.map((element: DomHandlerElement) => {
+      const signature = generateStructureSignature(element);
+      return this.calculateJaccardSimilarity(firstSignature.split('.'), signature.split('.'));
     });
 
     return similarities.reduce((sum: number, sim: number) => sum + sim, 0) / similarities.length;
-  }
-  
-  /**
-   * Generate a signature for DOM structure comparison
-   */
-  private generateStructureSignature(element: Element): string {
-    const tagName = element.tagName?.toLowerCase() || '';
-    const classes = element.attribs?.class?.split(/\s+/).filter(Boolean) || [];
-    return `${tagName}${classes.length ? '.' + classes.join('.') : ''}`;
   }
   
   /**
@@ -294,11 +310,12 @@ export class DOMProductDetector {
     const images = this.$('img');
     let hasImages = false;
 
-    images.each(function(this: Element, _i: number, _el: Element): void {
-      if (this.tagName === 'img') {
+    images.each((_index: number, element: DomHandlerElement) => {
+      if (isTagElement(element) && element.tagName === 'img') {
         hasImages = true;
         return false; // Break the loop
       }
+      return true;
     });
 
     return images.length > 0 || hasImages;
@@ -308,8 +325,18 @@ export class DOMProductDetector {
    * Check if a collection of elements contains price patterns
    */
   public containsPricePatterns(): boolean {
-    const priceElements = this.$('*').filter(function(this: Element): boolean {
-      const text = this.type === 'tag' ? this.children.map(c => c.data).join('').trim() : '';
+    const priceElements = this.$('*').filter((_index: number, element: DomHandlerElement) => {
+      if (!isTagElement(element)) return false;
+      
+      let text = '';
+      if (element.children) {
+        text = element.children
+          .filter(child => child.type === 'text' && (child as any).data)
+          .map(child => (child as any).data || '')
+          .join('')
+          .trim();
+      }
+      
       return /\$\d+(\.\d{2})?|\d+(\.\d{2})?\s*(USD|EUR|GBP)/.test(text);
     });
 
@@ -346,13 +373,18 @@ export class DOMProductDetector {
   public findRelatedText(selector: string): string[] {
     const results: string[] = [];
 
-    this.$(selector).each(function(this: Element): void {
-      const parentEl = this.parent;
-      if (parentEl && parentEl.type === 'tag') {
-        const text = parentEl.children.map(c => c.data).join('').trim();
-        if (text) {
-          results.push(text);
-        }
+    this.$(selector).each((_index: number, element: DomHandlerElement) => {
+      if (!element.parent || !isTagElement(element.parent)) return;
+      
+      const parentEl = element.parent;
+      
+      const textNodes = parentEl.children.filter(child => 
+        child.type === 'text' && (child as any).data
+      );
+      
+      const text = textNodes.map(node => (node as any).data || '').join('').trim();
+      if (text) {
+        results.push(text);
       }
     });
 
@@ -362,7 +394,9 @@ export class DOMProductDetector {
   /**
    * Score an image-text pair for product likelihood
    */
-  private scoreImageTextPair(image: Element): number {
+  private scoreImageTextPair(image: DomHandlerElement): number {
+    if (!isTagElement(image)) return 0;
+    
     let score = 0;
 
     // Score based on image attributes
@@ -376,7 +410,7 @@ export class DOMProductDetector {
     if (src && !/icon|logo|banner/i.test(src)) score += 1;
 
     // Score based on parent element characteristics
-    if (image.parent?.type === 'tag') {
+    if (image.parent && isTagElement(image.parent)) {
       const parentClasses = image.parent.attribs?.class || '';
       if (/product|item|thumbnail/i.test(parentClasses)) score += 2;
     }
@@ -387,7 +421,7 @@ export class DOMProductDetector {
   /**
    * Find the closest price element to a product name
    */
-  private findClosestPriceElement(productName: string): Element | null {
+  private findClosestPriceElement(productName: string): DomHandlerElement | null {
     // Implementation would go here
     return null;
   }
@@ -419,8 +453,8 @@ export class DOMProductDetector {
 }
 
 // Helper functions
-function findClosestText(element: Element): string {
-  if (!element.parent || element.parent.type !== 'tag') {
+function findClosestText(element: DomHandlerElement): string {
+  if (!element.parent || !isTagElement(element.parent)) {
     return '';
   }
 
@@ -432,8 +466,8 @@ function findClosestText(element: Element): string {
   let minDistance = Infinity;
 
   siblings.forEach(sibling => {
-    if (sibling.type === 'text' && sibling.data) {
-      const text = sibling.data.trim();
+    if (sibling.type === 'text' && (sibling as any).data) {
+      const text = (sibling as any).data.trim();
       if (text) {
         const distance = Math.abs(
           element.parent!.children.indexOf(element) - 

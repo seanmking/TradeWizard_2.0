@@ -1,9 +1,8 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { processOptimizedQuery } from '../../lib/services/ai/server-actions';
 import { TaskType } from '../../lib/services/ai/openai-service';
-import { ToneAdaptationService } from '../../lib/services/ai/tone-adaptation-service';
 import { ConversationManager } from '../../lib/services/ai/conversation';
 
 interface ExportVisionStatementProps {
@@ -14,16 +13,15 @@ interface ExportVisionStatementProps {
 }
 
 // Initialize services
-const toneService = new ToneAdaptationService();
 const conversationManager = new ConversationManager(
-  "You are an expert in crafting compelling export vision statements that sound natural and authentic."
+  'You are an expert in crafting compelling export vision statements that sound natural and authentic.'
 );
 
 const ExportVisionStatement: React.FC<ExportVisionStatementProps> = ({
   businessName,
   exportMotivation,
   targetMarkets,
-  firstName
+  firstName,
 }) => {
   const [visionStatement, setVisionStatement] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -31,7 +29,40 @@ const ExportVisionStatement: React.FC<ExportVisionStatementProps> = ({
   const [editedVision, setEditedVision] = useState<string>('');
   const [regenerateCount, setRegenerateCount] = useState(0);
 
-  const generateVisionStatement = async () => {
+  // Improved fallback vision generator
+  const generateFallbackVision = useCallback(() => {
+    const parts = [];
+    
+    // First sentence: Business name and motivation
+    if (businessName && exportMotivation) {
+      parts.push(
+        `At ${businessName}, we are driven by our goal to ${exportMotivation.toLowerCase()}`
+      );
+    } else if (businessName) {
+      parts.push(`At ${businessName}, we are committed to expanding our global presence`);
+    }
+    
+    // Second sentence: Target markets with more natural phrasing
+    if (targetMarkets) {
+      const markets = Array.isArray(targetMarkets) ? targetMarkets.join(', ') : targetMarkets;
+      parts.push(
+        `Our vision is to establish a strong presence in ${markets}, bringing our quality products and services to new customers`
+      );
+    } else {
+      parts.push(
+        'Our vision is to establish a strong presence in international markets, bringing our quality products and services to new customers'
+      );
+    }
+    
+    // Third sentence: Strong commitment to excellence
+    parts.push(
+      'Through strategic partnerships and deep market understanding, we will build sustainable growth while maintaining our commitment to excellence and customer satisfaction'
+    );
+    
+    return parts.join('. ') + '.';
+  }, [businessName, exportMotivation, targetMarkets]);
+
+  const generateVisionStatement = useCallback(async () => {
     if (!exportMotivation) {
       setIsLoading(false);
       return;
@@ -56,21 +87,25 @@ const ExportVisionStatement: React.FC<ExportVisionStatementProps> = ({
       });
       
       const prompt = `
-Generate a concise export vision statement for a business with the following details:
+Generate a concise, professional export vision statement for a business with the following details:
 - Business name: ${businessName || 'the business'}
 - Export motivation: ${exportMotivation}
 - Target markets: ${Array.isArray(targetMarkets) ? targetMarkets.join(', ') : targetMarkets || 'international markets'}
 
 The vision statement should:
-- Be 3-4 sentences long
+- Be 3-4 complete, properly capitalized sentences
+- Start with "At [Business Name], we..."
 - Focus on motivation and aspirations
-- Incorporate target markets naturally
-- Avoid buzzwords and AI-like phrasing
+- Incorporate target markets naturally in the second or third sentence
+- Use proper grammar, punctuation, and capitalization throughout
+- Avoid buzzwords, clichés, and AI-like phrasing
 - Sound like it was written by a business owner
 - Be inspiring but grounded in reality
+- End with a strong commitment to excellence and growth
 
 Format the response as a JSON object with a single key "visionStatement" containing the narrative text.
-Do not include any formatting, bullet points, or line breaks in the vision statement.`;
+Do not include any formatting, bullet points, or line breaks in the vision statement.
+Ensure each sentence is properly capitalized and punctuated.`;
       
       // Add the prompt to the conversation
       conversation.addUserMessage(prompt);
@@ -83,22 +118,35 @@ Do not include any formatting, bullet points, or line breaks in the vision state
       try {
         parsedResponse = JSON.parse(result.response);
         if (parsedResponse.visionStatement) {
-          // Clean up any remaining formatting
+          // Clean up any remaining formatting and ensure proper capitalization
           const cleanVision = parsedResponse.visionStatement
             .replace(/[\n\r]/g, ' ')
             .replace(/\s+/g, ' ')
+            .replace(/\s+\./g, '.')
+            .replace(/\s+,/g, ',')
+            .replace(/\bi\b/g, 'I')
+            .replace(/([.!?]\s+)([a-z])/g, (_: string, p1: string, p2: string) => p1 + p2.toUpperCase())
             .trim();
-          setVisionStatement(cleanVision);
+          
+          // Ensure it starts with the business name
+          if (!cleanVision.startsWith(`At ${businessName}`)) {
+            setVisionStatement(generateFallbackVision());
+          } else {
+            setVisionStatement(cleanVision);
+          }
         } else {
           // Fallback if JSON is valid but missing visionStatement
           setVisionStatement(generateFallbackVision());
         }
-      } catch (e) {
+      } catch {
         // If JSON parsing fails, try to clean up the raw response
         const cleanedResponse = result.response
           .replace(/[\n\r]/g, ' ')
           .replace(/\s+/g, ' ')
-          .replace(/^["']|["']$/g, '') // Remove surrounding quotes if present
+          .replace(/\s+\./g, '.')
+          .replace(/\s+,/g, ',')
+          .replace(/\bi\b/g, 'I')
+          .replace(/([.!?]\s+)([a-z])/g, (_: string, p1: string, p2: string) => p1 + p2.toUpperCase())
           .trim();
         
         // Check if the cleaned response looks like JSON
@@ -106,8 +154,12 @@ Do not include any formatting, bullet points, or line breaks in the vision state
           // Still JSON-like, use fallback
           setVisionStatement(generateFallbackVision());
         } else {
-          // Use the cleaned response directly
-          setVisionStatement(cleanedResponse);
+          // Use the cleaned response if it starts correctly
+          if (!cleanedResponse.startsWith(`At ${businessName}`)) {
+            setVisionStatement(generateFallbackVision());
+          } else {
+            setVisionStatement(cleanedResponse);
+          }
         }
       }
     } catch (error) {
@@ -116,35 +168,11 @@ Do not include any formatting, bullet points, or line breaks in the vision state
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Improved fallback vision generator
-  const generateFallbackVision = () => {
-    const parts = [];
-    
-    // First sentence: Business name and motivation
-    if (businessName && exportMotivation) {
-      parts.push(`At ${businessName}, we are driven by our goal to ${exportMotivation.toLowerCase()}`);
-    } else if (businessName) {
-      parts.push(`At ${businessName}, we are committed to expanding our global presence`);
-    }
-    
-    // Second sentence: Target markets
-    if (targetMarkets) {
-      parts.push(`Our vision is to establish a strong presence in ${targetMarkets}, bringing our quality products and services to new customers`);
-    } else {
-      parts.push('Our vision is to establish a strong presence in international markets, bringing our quality products and services to new customers');
-    }
-    
-    // Third sentence: Forward-looking statement
-    parts.push('Through strategic partnerships and deep market understanding, we will build sustainable growth while maintaining our commitment to excellence and customer satisfaction');
-    
-    return parts.join('. ') + '.';
-  };
+  }, [businessName, exportMotivation, targetMarkets, generateFallbackVision]);
 
   useEffect(() => {
     generateVisionStatement();
-  }, [businessName, exportMotivation, targetMarkets]);
+  }, [generateVisionStatement]);
 
   const handleEdit = () => {
     setIsEditing(true);
@@ -183,12 +211,23 @@ Do not include any formatting, bullet points, or line breaks in the vision state
     <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-sm border border-blue-100">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center space-x-2">
-          <svg className="h-5 w-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path>
+          <svg
+            className="h-5 w-5 text-blue-600"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+              clipRule="evenodd"
+            ></path>
           </svg>
-          <h3 className="text-blue-700 font-medium">{firstName ? `${firstName}'s` : 'Your'} Export Vision</h3>
+          <h3 className="text-blue-700 font-medium">
+            {firstName ? `${firstName}&apos;s` : 'Your'} Export Vision
+          </h3>
         </div>
-        
+
         {!isEditing && (
           <div className="flex space-x-2">
             <button
@@ -207,12 +246,12 @@ Do not include any formatting, bullet points, or line breaks in the vision state
           </div>
         )}
       </div>
-      
+
       {isEditing ? (
         <div className="space-y-3">
           <textarea
             value={editedVision}
-            onChange={(e) => setEditedVision(e.target.value)}
+            onChange={e => setEditedVision(e.target.value)}
             className="w-full h-32 p-3 text-gray-700 border border-blue-200 rounded-md focus:ring-2 focus:ring-blue-200 focus:border-blue-400 resize-none"
             placeholder="Edit your export vision statement..."
           />
@@ -233,17 +272,19 @@ Do not include any formatting, bullet points, or line breaks in the vision state
         </div>
       ) : (
         <p className="text-gray-700 leading-relaxed">
-          {visionStatement || `${businessName || 'Your business'} has the potential to expand into international markets, building on your existing capabilities and market knowledge.`}
+          {visionStatement ||
+            `${businessName || 'Your business'} has the potential to expand into international markets, building on your existing capabilities and market knowledge.`}
         </p>
       )}
-      
+
       {regenerateCount >= 3 && !isEditing && (
         <p className="mt-2 text-sm text-amber-600">
-          You've reached the maximum number of regenerations. Please edit the current vision or contact support for assistance.
+          You have reached the maximum number of regenerations. Please edit the current vision or
+          contact support for assistance.
         </p>
       )}
     </div>
   );
 };
 
-export default ExportVisionStatement; 
+export default ExportVisionStatement;

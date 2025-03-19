@@ -668,21 +668,16 @@ function determineSector(industry: string): string {
  * Create fallback analysis when scraper is unavailable
  */
 function createFallbackAnalysis(websiteUrl: string): WebsiteData {
-  // Extract domain name for business name guess
+  // Extract domain name for error context
   const domain = new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`).hostname;
-  const businessName = domain
-    .replace(/www\.|\.com|\.co|\.org|\.net|\.io|\.biz/g, '')
-    .split('.')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
   
   return {
     url: websiteUrl,
     scrapedAt: new Date(),
-    businessName,
-    description: `Website analysis was limited due to technical constraints. We've made assumptions based on the domain ${domain}.`,
+    businessName: "Error - Information not found at this time",
+    description: "Error - Scraper service unavailable. Unable to analyze website content.",
     products: [
-      { name: 'Primary Product', description: 'Product details unavailable from website analysis' }
+      { name: "Error - Information not found at this time", description: "Error - Information not found at this time" }
     ],
     services: [],
     certifications: [],
@@ -691,15 +686,15 @@ function createFallbackAnalysis(websiteUrl: string): WebsiteData {
       exportStatements: []
     },
     contactInfo: {
-      email: `info@${domain}`,
-      phone: '',
-      address: ''
+      email: "Error - Information not found at this time",
+      phone: "Error - Information not found at this time",
+      address: "Error - Information not found at this time"
     },
-    locations: [{ name: 'Headquarters', type: 'headquarters' as const }],
+    locations: [{ name: "Error - Information not found at this time", type: 'headquarters' as const }],
     businessSizeIndicators: [],
-    customerSegments: ['General Customers'],
+    customerSegments: ["Error - Information not found at this time"],
     rawTextBySection: {
-      'note': `Limited analysis performed. Full website scraping was unavailable.`
+      'note': `ERROR: Scraper service failed or is unavailable. Website ${domain} could not be analyzed. Please check the scraper service status and try again.`
     }
   };
 } 

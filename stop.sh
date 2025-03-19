@@ -8,6 +8,7 @@ echo "=========================================="
 # Define PID file locations
 NEXTJS_PID_FILE="./.nextjs.pid"
 API_PID_FILE="./.api.pid"
+SCRAPER_PID_FILE="./.scraper.pid"
 
 # Kill a process and all its children
 kill_process_tree() {
@@ -120,24 +121,50 @@ cleanup_zombies() {
   done
 }
 
-# Stop all Node.js processes on our ports first
+# Stop all services in reverse order
 echo "Stopping Next.js server..."
+if [ -f "$NEXTJS_PID_FILE" ]; then
+  NEXTJS_PID=$(cat $NEXTJS_PID_FILE)
+  if [ -n "$NEXTJS_PID" ]; then
+    echo "Killing Next.js process $NEXTJS_PID"
+    kill_process_tree $NEXTJS_PID TERM
+  fi
+fi
 kill_node_dev_server 3000 "next"
 wait_for_port_release 3000 10
 
-echo "Stopping Scraper service..."
-kill_node_dev_server 3001 "scraper"
-wait_for_port_release 3001 10
-
 echo "Stopping Backend API..."
+if [ -f "$API_PID_FILE" ]; then
+  API_PID=$(cat $API_PID_FILE)
+  if [ -n "$API_PID" ]; then
+    echo "Killing Backend API process $API_PID"
+    kill_process_tree $API_PID TERM
+  fi
+fi
 kill_node_dev_server 5002 "api"
 wait_for_port_release 5002 10
+
+echo "Stopping Scraper service..."
+if [ -f "$SCRAPER_PID_FILE" ]; then
+  SCRAPER_PID=$(cat $SCRAPER_PID_FILE)
+  if [ -n "$SCRAPER_PID" ]; then
+    echo "Killing Scraper process $SCRAPER_PID"
+    kill_process_tree $SCRAPER_PID TERM
+  fi
+fi
+kill_node_dev_server 3001 "scraper"
+wait_for_port_release 3001 10
 
 # Clean up any zombie processes
 cleanup_zombies
 
+# Kill any remaining nodemon or ts-node-dev processes
+echo "Checking for remaining nodemon or ts-node-dev processes..."
+pkill -f "nodemon" || true
+pkill -f "ts-node-dev" || true
+
 # Remove PID files
-rm -f $NEXTJS_PID_FILE $API_PID_FILE
+rm -f $NEXTJS_PID_FILE $API_PID_FILE $SCRAPER_PID_FILE
 
 # Final verification
 echo "Verifying all processes are stopped..."
@@ -152,7 +179,7 @@ for port in 3000 3001 5002; do
 done
 
 # Check for any remaining Node.js processes
-remaining_node=$(pgrep -f "node.*(next|backend|3000|3001|5002)" || echo "")
+remaining_node=$(pgrep -f "node.*(next|backend|scraper|3000|3001|5002)" || echo "")
 if [ -n "$remaining_node" ]; then
     echo "WARNING: Some Node.js processes might still be running: $remaining_node"
     echo "You may need to manually kill these processes using: kill -9 $remaining_node"

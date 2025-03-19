@@ -123,20 +123,24 @@ function buildEnhancedProductDetectionPrompt(url, html) {
 URL: ${url}
 
 TASK:
-1. Carefully analyze the HTML below to identify all products or services
-2. For each product, extract:
-   - name: The product name
-   - description: A brief description
-   - price: The price (if available)
-   - category: Product category or type
+1. Carefully analyze the HTML below to identify ONLY products or services that are EXPLICITLY mentioned
+2. For each product ACTUALLY PRESENT in the HTML, extract:
+   - name: The product name EXACTLY as it appears
+   - description: A brief description ONLY if provided in the HTML
+   - price: The price (if available) EXACTLY as shown
+   - category: Product category or type ONLY if explicitly stated
    - images: Array of image URLs if present in the HTML
-   - attributes: Any additional attributes (size, color, material, etc.)
+   - attributes: Any additional attributes (size, color, material, etc.) EXPLICITLY mentioned
 
 INSTRUCTIONS:
-- Focus only on actual products or services, not navigation elements or website features
-- Include all product details you can find, especially unique features
-- Assign a confidence score (high, medium, low) based on how clearly this is a product
-- If you're unsure if something is a product, include it with low confidence
+- ONLY extract products that are clearly identified in the HTML
+- DO NOT invent products, descriptions, or details not present in the HTML
+- DO NOT make assumptions about the business or its products beyond what is explicitly stated
+- If you can't find specific information, leave that field empty
+- Assign a confidence score (high, medium, low) based on how clearly this is identified as a product
+- If no products are found, return an empty array - do not invent products
+
+CRITICAL: This is for a serious business analysis. Do not hallucinate or make up information not present in the HTML. Only extract what is explicitly stated.
 
 RESPONSE FORMAT:
 Return a valid JSON array containing product objects. The response MUST be valid JSON that can be parsed with JSON.parse().

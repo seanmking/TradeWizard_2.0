@@ -173,54 +173,61 @@ async function extractBusinessInfo(pageData) {
 
     // Create the prompt for the LLM
     const prompt = `
-      You are an expert business analyst specialized in international trade and export readiness. Your task is to extract structured information about a company from their website content to assess their export potential and international business capabilities.
+      You are an expert business analyst specialized in international trade and export readiness. Your task is to extract ONLY explicitly stated information about a company from their website content.
       
-      Analyze the following website content and extract key business information in a structured format:
+      Analyze the following website content and extract ONLY factual, verifiable information in a structured format:
       
       ${combinedContent}
       
+      IMPORTANT GUIDELINES:
+      1. ONLY extract information that is EXPLICITLY stated in the text provided
+      2. DO NOT make assumptions or infer information that is not clearly stated
+      3. DO NOT hallucinate or invent details about the business
+      4. If information is not available, use empty strings or empty arrays
+      5. Be conservative in your extraction - it's better to leave a field empty than to provide potentially incorrect information
+      
       Extract the following information in JSON format:
       - businessName: The official name of the business (if not found, leave as an empty string)
-      - businessSize: Categorize as "micro", "small", "medium", or "large" based on context
-      - description: A concise description of the business (max 200 words)
-      - foundedYear: The year the business was founded (if mentioned)
-      - employeeCount: Approximate number of employees (if mentioned)
-      - geographicPresence: Array of locations where the business operates (countries, cities)
-      - industries: Array of industries the business operates in
-      - exportMarkets: Array of countries or regions the business exports to (if applicable)
-      - internationalPartnerships: Array of international partners or distributors mentioned
-      - customerSegments: Array of customer segments or target markets
-      - exportReadiness: Rate from 0-100 how export-ready the business appears to be
-      - b2bFocus: Rate from 0-100 how focused the business is on B2B vs B2C
-      - valueProposition: Key value proposition for international markets
-      - certifications: Array of quality/regulatory certifications held (ISO, etc.)
-      - regulatoryCompliance: Information about compliance with international standards
-      - supplyChainInfo: Details about manufacturing, capacity, sourcing
-      - minimumOrderQuantities: Information about MOQs if mentioned
-      - shippingCapabilities: International shipping and logistics information
-      - ecommerceCapabilities: Assessment of online sales capabilities for international markets
-      - languagesSupported: Array of languages the company operates in
-      - intellectualProperty: Any patents, trademarks, or IP mentioned
-      - strengths: Array of business strengths for international trade
-      - weaknesses: Array of potential weaknesses for international expansion
-      - innovationCapabilities: Information about R&D or innovation
-      - marketShareInfo: Information about the company's market share or position
-      - growthTrends: Information about growth trends or projections
-      - competitivePositioning: How the company positions itself against competitors
-      - salesChannels: Array of sales channels (direct, distributor, agent, online)
-      - environmentalCertifications: Array of environmental/sustainability certifications
-      - organicCertifications: Array of organic/natural product certifications
-      - fairTradeCertifications: Array of fair trade or ethical certifications
-      - productSafetyCertifications: Array of product safety certifications
-      - testingCertifications: Array of testing/laboratory certifications
-      - regulatoryAuthorities: Array of regulatory authorities mentioned
-      - sustainabilityPractices: Information about sustainability initiatives
-      - corporateSocialResponsibility: Information about CSR programs
-      - awards: Array of awards or recognitions received
-      - responseTime: Information about response time to inquiries if mentioned
-      - socialMediaPresence: Assessment of social media presence for international audiences
+      - businessSize: Categorize as "micro", "small", "medium", or "large" ONLY if clear indicators exist
+      - description: A concise description of the business USING ONLY text from the content
+      - foundedYear: The year the business was founded (ONLY if explicitly mentioned)
+      - employeeCount: Approximate number of employees (ONLY if explicitly mentioned)
+      - geographicPresence: Array of locations where the business operates (ONLY those explicitly mentioned)
+      - industries: Array of industries the business operates in (ONLY those explicitly mentioned)
+      - exportMarkets: Array of countries or regions the business exports to (ONLY if explicitly mentioned)
+      - internationalPartnerships: Array of international partners or distributors (ONLY those explicitly named)
+      - customerSegments: Array of customer segments or target markets (ONLY those explicitly mentioned)
+      - exportReadiness: Rate from 0-100 how export-ready the business appears to be (based ONLY on explicit evidence)
+      - b2bFocus: Rate from 0-100 how focused the business is on B2B vs B2C (ONLY based on explicit evidence)
+      - valueProposition: Key value proposition (ONLY using exact phrases from the content)
+      - certifications: Array of quality/regulatory certifications held (ONLY those explicitly mentioned)
+      - regulatoryCompliance: Information about compliance with international standards (ONLY if explicitly mentioned)
+      - supplyChainInfo: Details about manufacturing, capacity, sourcing (ONLY what is explicitly stated)
+      - minimumOrderQuantities: Information about MOQs (ONLY if explicitly mentioned)
+      - shippingCapabilities: International shipping and logistics information (ONLY what is explicitly stated)
+      - ecommerceCapabilities: Assessment of online sales capabilities (ONLY based on explicit evidence)
+      - languagesSupported: Array of languages the company operates in (ONLY those explicitly mentioned)
+      - intellectualProperty: Any patents, trademarks, or IP (ONLY those explicitly mentioned)
+      - strengths: Array of business strengths (ONLY those explicitly mentioned)
+      - weaknesses: Array of potential weaknesses (ONLY those explicitly mentioned)
+      - innovationCapabilities: Information about R&D or innovation (ONLY what is explicitly stated)
+      - marketShareInfo: Information about the company's market share or position (ONLY if explicitly mentioned)
+      - growthTrends: Information about growth trends or projections (ONLY if explicitly mentioned)
+      - competitivePositioning: How the company positions itself (ONLY using phrases from the content)
+      - salesChannels: Array of sales channels (ONLY those explicitly mentioned)
+      - environmentalCertifications: Array of environmental certifications (ONLY those explicitly mentioned)
+      - organicCertifications: Array of organic certifications (ONLY those explicitly mentioned)
+      - fairTradeCertifications: Array of fair trade certifications (ONLY those explicitly mentioned)
+      - productSafetyCertifications: Array of safety certifications (ONLY those explicitly mentioned)
+      - testingCertifications: Array of testing certifications (ONLY those explicitly mentioned)
+      - regulatoryAuthorities: Array of regulatory authorities (ONLY those explicitly mentioned)
+      - sustainabilityPractices: Information about sustainability initiatives (ONLY what is explicitly stated)
+      - corporateSocialResponsibility: Information about CSR programs (ONLY what is explicitly stated)
+      - awards: Array of awards or recognitions (ONLY those explicitly mentioned)
+      - responseTime: Information about response time (ONLY if explicitly mentioned)
+      - socialMediaPresence: Assessment of social media presence (ONLY based on explicit evidence)
       
-      Use evidence from the text to justify your extraction. If you can't find specific information, use reasonable defaults or leave fields empty. Return ONLY the JSON object with no additional explanation.
+      Return ONLY the JSON object with no additional explanation. If you're not certain about information, omit it rather than guessing.
     `;
 
     const messages = [
@@ -462,7 +469,14 @@ async function analyzeExportReadiness(pageData, businessInfo) {
       
       ${combinedContent}
       
-      Assess the business on these export readiness factors:
+      IMPORTANT GUIDELINES:
+      1. ONLY base your assessment on explicitly stated facts in the text provided
+      2. DO NOT make assumptions or infer information that is not clearly stated
+      3. DO NOT hallucinate or invent details about the business
+      4. If information is not available, indicate low confidence and limited evidence
+      5. Be conservative in your assessment - it's better to have a lower score with high confidence than a higher score based on assumptions
+      
+      Assess the business on these export readiness factors ONLY using explicit evidence from the content:
       1. International Experience: Evidence of existing export activity or international presence
       2. Product/Service Adaptability: How suitable their offerings are for international markets
       3. Certifications & Standards: Relevant certifications for international trade (ISO, HACCP, GMP, etc.)
@@ -475,15 +489,16 @@ async function analyzeExportReadiness(pageData, businessInfo) {
       10. Financial Readiness: Evidence of financing, pricing strategies, and payment methods for export
       
       Format your response as a JSON object with:
-      - exportReadiness: Overall score (0-100)
-      - strengths: Array of export readiness strengths
-      - weaknesses: Array of export readiness weaknesses
-      - recommendations: Array of improvement recommendations
-      - targetMarkets: Array of suggested export markets based on the analysis
-      - complianceGaps: Array of compliance issues that need to be addressed
-      - certificationNeeds: Array of certifications recommended for target markets
-      - supplyChainRisks: Array of supply chain risks for international expansion
-      - marketEntryStrategy: Suggested approach for market entry (direct export, distributor, e-commerce, etc.)
+      - exportReadiness: Overall score (0-100), default to 50 if insufficient evidence
+      - confidence: Overall confidence in your assessment (0-100), based on amount of explicit evidence
+      - strengths: Array of export readiness strengths ONLY based on explicit evidence (empty array if none found)
+      - weaknesses: Array of export readiness weaknesses ONLY based on explicit evidence (empty array if none found)
+      - recommendations: Array of improvement recommendations based ONLY on identified weaknesses
+      - targetMarkets: Array of suggested export markets ONLY if explicitly mentioned in the content
+      - complianceGaps: Array of compliance issues ONLY if explicitly identified in the content
+      - certificationNeeds: Array of certifications recommended ONLY based on business type and explicit needs
+      - supplyChainRisks: Array of supply chain risks ONLY if explicitly mentioned
+      - marketEntryStrategy: Suggested approach ONLY based on the business's explicit capabilities
       
       Return ONLY the JSON object with no additional explanation.
     `;
@@ -588,81 +603,57 @@ function getContentFromPageType(pageData, pageType) {
  * @returns {Object} - Mock business information
  */
 function getMockBusinessInfo(pages) {
-  // Try to extract business name from title
-  let businessName = "Unknown Business";
-  let description = "";
-  
-  // Extract business name from page titles
-  for (const page of pages) {
-    if (page.title && page.title.includes(' | ')) {
-      // Often titles are in format "Page Name | Business Name"
-      businessName = page.title.split(' | ').pop().trim();
-      break;
-    } else if (page.title && !page.title.toLowerCase().includes('home') && page.types?.includes('home')) {
-      // Use home page title if not generic
-      businessName = page.title.trim();
-      break;
-    }
-  }
-  
-  // Extract domains from URLs to guess business name
-  if (businessName === "Unknown Business" && pages.length > 0) {
+  // Extract domain for error context
+  let domain = "unknown-domain";
+  if (pages && pages.length > 0 && pages[0].url) {
     try {
       const url = new URL(pages[0].url);
-      const domain = url.hostname.replace('www.', '').split('.')[0];
-      if (domain.length > 3) {
-        businessName = domain.charAt(0).toUpperCase() + domain.slice(1);
-      }
+      domain = url.hostname;
     } catch (e) {}
   }
   
-  // Count page types to determine business segments
-  const pageTypes = pages.flatMap(p => p.types).filter(Boolean);
-  const hasProducts = pageTypes.includes('products');
-  const hasExport = pageTypes.includes('export');
-  
-  // Generate mock business info
+  // Return error status for all fields
   return {
-    businessName,
-    businessSize: "small",
-    description: description || `${businessName} is a South African business.`,
+    businessName: "Error - Information not found at this time",
+    businessSize: "Error - Information not found at this time",
+    description: "Error - LLM analysis failed. Scraper service could not analyze business information.",
     foundedYear: null,
     employeeCount: null,
-    customerSegments: ["B2C"],
-    productCategories: hasProducts ? ["Food & Beverage"] : [],
+    customerSegments: ["Error - Information not found at this time"],
+    productCategories: ["Error - Information not found at this time"],
     certifications: [],
-    geographicPresence: ["South Africa"],
-    exportMarkets: hasExport ? ["African countries"] : [],
-    industries: ["General Manufacturing"],
-    b2bFocus: 50,
-    exportReadiness: 30,
+    geographicPresence: ["Error - Information not found at this time"],
+    exportMarkets: [],
+    industries: ["Error - Information not found at this time"],
+    b2bFocus: 0,
+    exportReadiness: 0,
     internationalPartnerships: [],
-    valueProposition: null,
-    regulatoryCompliance: null,
-    supplyChainInfo: null,
-    minimumOrderQuantities: null,
-    shippingCapabilities: null,
-    ecommerceCapabilities: "Basic online presence",
-    languagesSupported: ["English"],
-    intellectualProperty: null,
-    strengths: ["Local market presence"],
-    weaknesses: ["Limited international experience"],
-    innovationCapabilities: null,
-    marketShareInfo: null,
-    growthTrends: null,
-    competitivePositioning: null,
-    salesChannels: ["Direct"],
+    valueProposition: "Error - Information not found at this time",
+    regulatoryCompliance: "Error - Information not found at this time",
+    supplyChainInfo: "Error - Information not found at this time",
+    minimumOrderQuantities: "Error - Information not found at this time",
+    shippingCapabilities: "Error - Information not found at this time",
+    ecommerceCapabilities: "Error - Information not found at this time",
+    languagesSupported: ["Error - Information not found at this time"],
+    intellectualProperty: "Error - Information not found at this time",
+    strengths: ["Error - Information not found at this time"],
+    weaknesses: ["Error - Information not found at this time"],
+    innovationCapabilities: "Error - Information not found at this time",
+    marketShareInfo: "Error - Information not found at this time",
+    growthTrends: "Error - Information not found at this time",
+    competitivePositioning: "Error - Information not found at this time",
+    salesChannels: ["Error - Information not found at this time"],
     environmentalCertifications: [],
     organicCertifications: [],
     fairTradeCertifications: [],
     productSafetyCertifications: [],
     testingCertifications: [],
     regulatoryAuthorities: [],
-    sustainabilityPractices: null,
-    corporateSocialResponsibility: null,
+    sustainabilityPractices: "Error - Information not found at this time",
+    corporateSocialResponsibility: "Error - Information not found at this time",
     awards: [],
-    responseTime: null,
-    socialMediaPresence: null
+    responseTime: "Error - Information not found at this time",
+    socialMediaPresence: "Error - Information not found at this time"
   };
 }
 
@@ -672,62 +663,40 @@ function getMockBusinessInfo(pages) {
  * @returns {Object} - Mock export readiness assessment
  */
 function getMockExportReadiness(businessInfo) {
-  // Determine export readiness score based on business info
-  let score = 30; // Base score
-  
-  // Boost score based on available business info
-  if (businessInfo.exportMarkets && businessInfo.exportMarkets.length > 0) {
-    score += 25; // Already exporting
-  }
-  
-  if (businessInfo.certifications && businessInfo.certifications.length > 0) {
-    score += 15; // Has certifications
-  }
-  
-  if (businessInfo.geographicPresence && businessInfo.geographicPresence.length > 1) {
-    score += 10; // Multiple locations
-  }
-  
-  // Cap score at 100
-  score = Math.min(score, 100);
-  
   return {
-    exportReadiness: score,
+    exportReadiness: 0,
+    confidence: 0,
     strengths: [
-      "Established local presence in South Africa",
-      "Product range suitable for export markets",
-      "Website presents comprehensive product information"
+      "Error - Information not found at this time",
+      "Error - Export analysis failed",
+      "Error - Check scraper service status"
     ],
     weaknesses: [
-      "Limited international certifications mentioned",
-      "No clear export process information on website",
-      "Limited multi-language support on website"
+      "Error - Information not found at this time",
+      "Error - Export analysis failed",
+      "Error - Check scraper service status"
     ],
     recommendations: [
-      "Obtain relevant international certifications for target markets",
-      "Develop export-focused section on website",
-      "Highlight any existing export success stories",
-      "Consider adding multiple language options to website"
+      "Error - Information not found at this time",
+      "Error - Export analysis failed",
+      "Error - Check scraper service status"
     ],
     targetMarkets: [
-      "Neighboring African countries",
-      "Other emerging markets with similar product demand"
+      "Error - Information not found at this time"
     ],
     complianceGaps: [
-      "Missing product-specific certifications for international markets",
-      "Limited evidence of regulatory compliance documentation"
+      "Error - Information not found at this time",
+      "Error - Export analysis failed"
     ],
     certificationNeeds: [
-      "ISO 9001 Quality Management System",
-      "Market-specific product certifications",
-      "Export/import documentation training"
+      "Error - Information not found at this time",
+      "Error - Export analysis failed"
     ],
     supplyChainRisks: [
-      "Unclear manufacturing capacity for export volume",
-      "Limited information about international logistics partners",
-      "Potential delivery delays for international shipments"
+      "Error - Information not found at this time",
+      "Error - Export analysis failed"
     ],
-    marketEntryStrategy: "Start with direct exports to neighboring countries, then develop distributor relationships in target markets. Consider e-commerce platforms for B2B engagement."
+    marketEntryStrategy: "Error - Export analysis failed. Unable to recommend market entry strategy. Please check the scraper service and try again."
   };
 }
 

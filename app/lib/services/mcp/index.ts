@@ -30,14 +30,14 @@ class MCPService {
     } catch (error: any) {
       console.error(`Error in MCP website analysis: ${error.message}`);
       
-      // Fallback to mock data if the scraper fails
+      // Fallback to error messages instead of mock data
       return {
-        productCategories: ['Sample Product 1', 'Sample Product 2'],
-        certifications: ['ISO 9001', 'HACCP'],
-        geographicPresence: ['South Africa', 'Local only'],
-        businessSize: 'medium',
-        customerSegments: ['B2B', 'Local retailers'],
-        exportReadiness: 45 // Example score
+        productCategories: ['Error - Information not found at this time'],
+        certifications: ['Error - Information not found at this time'],
+        geographicPresence: ['Error - Information not found at this time'],
+        businessSize: 'small', // Using valid enum value, but will be displayed as error
+        customerSegments: ['Error - Information not found at this time'],
+        exportReadiness: 0 // Error indicator
       };
     }
   }

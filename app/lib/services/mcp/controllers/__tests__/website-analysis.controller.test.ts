@@ -1,7 +1,6 @@
-import { WebsiteAnalysisController } from '../website-analysis.controller';
+import { analyzeWebsite } from '../website-analysis.controller';
 import { isScraperServiceAvailable, analyzeWebsiteWithScraperService } from '../../services/website-analysis.service';
-import { HybridProductDetector } from '../../services/hybrid-product-detector.service';
-import { WebsiteAnalysisResult, EnhancedWebsiteAnalysisResult, BasicWebsiteAnalysisResult } from '../../models/website-data.model';
+import { EnhancedWebsiteAnalysisResult } from '../../models/website-data.model';
 
 // Mock the external services
 jest.mock('../../services/website-analysis.service');
@@ -22,8 +21,7 @@ jest.mock('../../services/hybrid-product-detector.service', () => {
   };
 });
 
-describe('WebsiteAnalysisController', () => {
-  let controller: WebsiteAnalysisController;
+describe('Website Analysis', () => {
   const mockUrl = 'https://example.com';
   const mockHtml = '<html><body>Test content</body></html>';
 
@@ -37,8 +35,6 @@ describe('WebsiteAnalysisController', () => {
         text: () => Promise.resolve(mockHtml)
       } as unknown as Response)
     );
-    
-    controller = new WebsiteAnalysisController();
   });
 
   describe('analyzeWebsite', () => {
@@ -48,71 +44,52 @@ describe('WebsiteAnalysisController', () => {
       
       // Mock scraper service response
       const mockBaseResult = {
-        businessName: 'Test Company',
-        description: 'A test company',
-        productCategories: ['Category 1'],
-        certifications: [],
-        geographicPresence: ['US'],
-        businessSize: 'small' as const,
-        customerSegments: ['B2B'],
-        exportReadiness: 75,
-        productDetails: [{ name: 'Product 1', description: 'Description 1' }],
-        exportMentions: [],
-        contactInfo: {},
-        locations: [],
-        lastUpdated: new Date(),
-        websiteQuality: {
-          hasSsl: true,
-          hasMobileCompatibility: true,
-          hasRecentUpdates: true,
-          hasMultiplePages: true
+        url: mockUrl,
+        title: 'Test Website',
+        description: 'A test website',
+        products: [
+          {
+            name: 'Product 1',
+            description: 'Description 1'
+          }
+        ],
+        categories: ['Category 1'],
+        metrics: {
+          confidence: 0.75,
+          totalTime: 1000,
+          costIncurred: 0.01,
+          modelUsed: 'hybrid'
         }
       };
-      
+
       (analyzeWebsiteWithScraperService as jest.Mock).mockResolvedValue(mockBaseResult);
 
-      const result = await controller.analyzeWebsite(mockUrl);
+      const result = await analyzeWebsite(mockUrl) as EnhancedWebsiteAnalysisResult;
 
-      expect(result).toHaveProperty('analysisType');
-      expect(result).toHaveProperty('url', mockUrl);
-      expect(result).toHaveProperty('products');
-      expect(result).toHaveProperty('categories');
-      expect(isScraperServiceAvailable).toHaveBeenCalled();
-      expect(analyzeWebsiteWithScraperService).toHaveBeenCalledWith(mockUrl);
+      expect(result).toBeDefined();
+      expect(result.url).toBe(mockUrl);
+      expect(result.products).toHaveLength(1);
+      expect(result.products[0].name).toBe('Product 1');
     });
 
-    it('should fallback to hybrid detection when scraper service is unavailable', async () => {
+    it('should fall back to hybrid detection when scraper service is unavailable', async () => {
       // Mock scraper service as unavailable
       (isScraperServiceAvailable as jest.Mock).mockResolvedValue(false);
 
-      const result = await controller.analyzeWebsite(mockUrl);
+      const result = await analyzeWebsite(mockUrl) as EnhancedWebsiteAnalysisResult;
 
-      // Update expectations to match the actual return type
-      expect(result).toHaveProperty('analysisType');
-      expect(result).toHaveProperty('url', mockUrl);
-      expect(result).toHaveProperty('products');
-      expect(result).toHaveProperty('categories');
-      expect(HybridProductDetector).toHaveBeenCalled();
+      expect(result).toBeDefined();
+      expect(result.url).toBe(mockUrl);
+      expect(result.products).toHaveLength(1);
+      expect(result.products[0].name).toBe('Product 1');
     });
 
-    it('should return basic result when analysis fails', async () => {
-      // Mock scraper service to throw error
+    it('should handle errors gracefully', async () => {
+      // Mock scraper service to throw an error
       (isScraperServiceAvailable as jest.Mock).mockRejectedValue(new Error('Service unavailable'));
+      (global.fetch as jest.Mock).mockRejectedValue(new Error('Network error'));
 
-      const result = await controller.analyzeWebsite(mockUrl);
-
-      expect(result).toHaveProperty('analysisType', 'basic');
-      expect(result).toHaveProperty('businessName', '');
-      expect(result).toHaveProperty('productCategories', []);
-    });
-  });
-
-  describe('getAnalyticsData', () => {
-    it('should return cache and metrics data', () => {
-      const result = controller.getAnalyticsData();
-      
-      expect(result).toHaveProperty('cache');
-      expect(result).toHaveProperty('metrics');
+      await expect(analyzeWebsite(mockUrl)).rejects.toThrow();
     });
   });
 }); 

@@ -6,11 +6,13 @@
  */
 
 import * as cheerio from 'cheerio';
+import type { CheerioAPI, Element as CheerioElement, AnyNode } from 'cheerio';
+import type { Element as DomHandlerElement } from 'domhandler';
 import { EnhancedProduct, ProductDetectionResult, ProductAnalysisMetrics } from '../types/product-detection.types';
-import { DomProductDetector } from '../utils/dom-product-detector';
+import { DOMProductDetector } from '../utils/dom-product-detector';
 
 interface DetectionContext {
-  $: cheerio.CheerioAPI;
+  $: CheerioAPI;
   url: string;
   startTime: number;
   metrics: ProductAnalysisMetrics;
@@ -58,16 +60,27 @@ const DEFAULT_CONFIG: ProductDetectorConfig = {
 };
 
 /**
+ * Type guard to check if an element is a tag element
+ */
+function isTagElement(element: DomHandlerElement | null): element is DomHandlerElement & { type: 'tag' | 'script' | 'style' } {
+  return !!element && 
+         (element.type === 'tag' || element.type === 'script' || element.type === 'style') &&
+         'tagName' in element &&
+         'name' in element &&
+         'attribs' in element;
+}
+
+/**
  * Hybrid Product Detector Service
  * Combines DOM-based detection with optional LLM enhancement
  */
 export class HybridProductDetector {
   private config: ProductDetectorConfig;
-  private domDetector: DomProductDetector;
+  private domDetector: DOMProductDetector;
   
   constructor(config: Partial<ProductDetectorConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.domDetector = new DomProductDetector();
+    this.domDetector = new DOMProductDetector('');
   }
   
   /**
@@ -161,7 +174,8 @@ export class HybridProductDetector {
    */
   private async detectWithDOM(html: string): Promise<ProductDetectionResult> {
     try {
-      const { products, patterns } = this.domDetector.detectProducts(html);
+      const domDetector = new DOMProductDetector(html);
+      const { products, patterns } = domDetector.detectProducts();
       
       // Filter out low-confidence products
       const filteredProducts = products.filter(
@@ -271,7 +285,7 @@ export class HybridProductDetector {
   /**
    * Determine website complexity based on DOM structure
    */
-  private determineWebsiteComplexity($: cheerio.CheerioAPI): number {
+  private determineWebsiteComplexity($: CheerioAPI): number {
     // Count the number of elements, depth of nesting, and complexity indicators
     
     // 1. Element count (normalized)
@@ -282,13 +296,14 @@ export class HybridProductDetector {
     let maxDepth = 0;
     
     // Sample a few elements to estimate maximum DOM depth
-    $('body *').each((_, element) => {
+    $('body *').each((_i: number, element: CheerioElement) => {
       let depth = 0;
       let current = element;
       
-      while (current.parent) {
+      // Type-safe parent traversal
+      while (current && 'parent' in current && current.parent) {
         depth++;
-        current = current.parent;
+        current = current.parent as CheerioElement;
         
         // Break early for very deep trees
         if (depth > 50) break;

@@ -1,6 +1,1 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  reactStrictMode: true,
-};
-
-module.exports = nextConfig; 
+// This file has been deprecated and replaced by next.config.mjs

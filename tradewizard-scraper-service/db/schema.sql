@@ -1,99 +1,63 @@
 -- TradeWizard Scraper Service Database Schema
+-- This schema creates a simplified structure for storing scraped website data
 
--- Create tables for storing scraped website data and products
--- This schema is designed for Supabase/PostgreSQL
-
--- Table for scraped websites
+-- Table: scraped_websites
+-- Stores website data with a JSONB column for flexible schema
 CREATE TABLE IF NOT EXISTS scraped_websites (
   id SERIAL PRIMARY KEY,
-  url TEXT NOT NULL UNIQUE,
-  business_name TEXT NOT NULL DEFAULT 'Unknown Business',
-  business_size TEXT NOT NULL DEFAULT 'small',
-  description TEXT,
-  founded_year INTEGER,
-  employee_count INTEGER,
-  customer_segments TEXT[] DEFAULT '{}',
-  product_categories TEXT[] DEFAULT '{}',
-  certifications TEXT[] DEFAULT '{}',
-  geographic_presence TEXT[] DEFAULT '{}',
-  export_readiness INTEGER DEFAULT 50,
-  export_markets TEXT[] DEFAULT '{}',
-  industries TEXT[] DEFAULT '{}',
-  b2b_focus INTEGER DEFAULT 50,
-  full_data JSONB NOT NULL,  -- Store the complete scraped data as JSON
-  last_scraped TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  url TEXT UNIQUE NOT NULL,
+  data JSONB,
+  status TEXT,
+  scraped_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
--- Create an index on the URL for faster lookups
-CREATE INDEX IF NOT EXISTS idx_scraped_websites_url ON scraped_websites (url);
-CREATE INDEX IF NOT EXISTS idx_scraped_websites_business_name ON scraped_websites (business_name);
-CREATE INDEX IF NOT EXISTS idx_scraped_websites_last_scraped ON scraped_websites (last_scraped);
+-- Index for faster URL lookups
+CREATE INDEX IF NOT EXISTS idx_scraped_websites_url ON scraped_websites(url);
 
--- Table for products associated with websites
-CREATE TABLE IF NOT EXISTS website_products (
-  id SERIAL PRIMARY KEY,
-  website_id INTEGER NOT NULL REFERENCES scraped_websites(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  description TEXT,
-  category TEXT DEFAULT 'General',
-  confidence TEXT DEFAULT 'low',
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-);
+-- Index for status-based queries
+CREATE INDEX IF NOT EXISTS idx_scraped_websites_status ON scraped_websites(status);
 
--- Create indexes for the products table
-CREATE INDEX IF NOT EXISTS idx_website_products_website_id ON website_products (website_id);
-CREATE INDEX IF NOT EXISTS idx_website_products_name ON website_products (name);
+-- Index for timestamp-based queries (recently updated, etc.)
+CREATE INDEX IF NOT EXISTS idx_scraped_websites_scraped_at ON scraped_websites(scraped_at);
 
--- Table for storing scrape jobs and their status
-CREATE TABLE IF NOT EXISTS scrape_jobs (
-  id SERIAL PRIMARY KEY,
-  url TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending', -- pending, running, completed, failed
-  options JSONB,
-  result JSONB,
-  error TEXT,
-  started_at TIMESTAMP WITH TIME ZONE,
-  completed_at TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-);
+-- JSONB index for business name (commonly accessed field)
+CREATE INDEX IF NOT EXISTS idx_scraped_websites_business_name ON scraped_websites((data->>'businessName'));
 
--- Create indexes for the jobs table
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_url ON scrape_jobs (url);
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs (status);
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_created_at ON scrape_jobs (created_at);
+-- Comment explaining the adapter pattern
+COMMENT ON TABLE scraped_websites IS 'Stores scraped website data using the adapter pattern with JSONB for schema flexibility';
 
--- View for quick access to website summaries
-CREATE OR REPLACE VIEW website_summaries AS
-SELECT 
-  sw.id,
-  sw.url,
-  sw.business_name,
-  sw.business_size,
-  sw.export_readiness,
-  COALESCE(array_length(sw.certifications, 1), 0) AS certification_count,
-  COALESCE(array_length(sw.geographic_presence, 1), 0) AS location_count,
-  COALESCE(array_length(sw.export_markets, 1), 0) AS export_market_count,
-  COALESCE(array_length(sw.industries, 1), 0) AS industry_count,
-  (SELECT COUNT(*) FROM website_products wp WHERE wp.website_id = sw.id) AS product_count,
-  sw.last_scraped,
-  sw.created_at
-FROM 
-  scraped_websites sw
-ORDER BY 
-  sw.last_scraped DESC;
+-- Create business data view for easier reporting
+CREATE OR REPLACE VIEW business_summary_view AS
+SELECT
+  id,
+  url,
+  data->>'businessName' AS business_name,
+  data->>'businessSize' AS business_size,
+  (data->>'exportReadiness')::INTEGER AS export_readiness,
+  jsonb_array_length(COALESCE(data->'productDetails', '[]'::jsonb)) AS product_count,
+  status,
+  scraped_at
+FROM
+  scraped_websites;
 
--- Function to update the last_scraped timestamp
-CREATE OR REPLACE FUNCTION update_last_scraped()
+-- Function to update the scraped_at timestamp
+CREATE OR REPLACE FUNCTION update_scraped_at()
 RETURNS TRIGGER AS $$
 BEGIN
-  NEW.last_scraped = NOW();
+  NEW.scraped_at = NOW();
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger to update last_scraped on update
-CREATE TRIGGER update_last_scraped_trigger
+-- Trigger to update scraped_at on update
+CREATE TRIGGER update_scraped_at_trigger
 BEFORE UPDATE ON scraped_websites
 FOR EACH ROW
-EXECUTE FUNCTION update_last_scraped(); 
+EXECUTE FUNCTION update_scraped_at();
+
+-- Grant permissions (modify as needed based on your Supabase configuration)
+ALTER TABLE scraped_websites ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admin can read all scraped_websites data" ON scraped_websites FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Admin can insert scraped_websites data" ON scraped_websites FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Admin can update scraped_websites data" ON scraped_websites FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Admin can delete scraped_websites data" ON scraped_websites FOR DELETE USING (auth.role() = 'authenticated'); 

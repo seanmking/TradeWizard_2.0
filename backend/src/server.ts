@@ -18,6 +18,8 @@ if (!process.env.TEST_MODE) {
 
 // Import Compliance MCP routes after setting TEST_MODE
 import complianceMcpRoutes from './mcp/compliance-mcp';
+// Import product routes
+import productRoutes from './routes/productRoutes';
 
 const app = express();
 
@@ -40,6 +42,9 @@ const tradeRoutes = require('./routes/tradeRoutes');
 
 // Register trade routes
 app.use('/api/trade', tradeRoutes);
+
+// Register product routes
+app.use('/api/products', productRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: Request, res: Response) => {

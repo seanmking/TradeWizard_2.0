@@ -31,6 +31,7 @@ A web scraper that:
 - Analyzes website content to determine complexity
 - Helps select the appropriate model based on content characteristics
 - Identifies content type for appropriate caching strategies
+- Detects products from SME websites using hybrid DOM/LLM analysis
 
 ### 5. Cost Monitoring Dashboard
 
@@ -41,6 +42,22 @@ An admin dashboard that:
 - Shows cache performance statistics
 
 ## Implementation Details
+
+### Hybrid Product Detection
+
+The system uses a sophisticated approach to detect products on SME websites:
+
+1. **DOM-based detection** first analyzes the HTML structure to identify:
+   - Repeating patterns (product grids/lists)
+   - Image-text pairs that likely represent products
+   - Price patterns and indicators
+
+2. **LLM enhancement** is applied selectively when:
+   - DOM detection is uncertain (low confidence scores)
+   - Website structure is complex
+   - Few or no products are detected via DOM methods
+
+This hybrid approach optimizes for both accuracy and cost, using the more expensive LLM component only when necessary.
 
 ### Model Selection Logic
 
@@ -105,6 +122,28 @@ const result = await processOptimizedQuery(
 
 console.log(`Response: ${result.response}`);
 console.log(`Cost savings: $${result.costSavings.toFixed(4)}`);
+```
+
+## Web Scraper Integration
+
+The enhanced web scraper provides:
+
+```typescript
+import { WebScraperService } from './src/lib/services/web-scraper.service';
+
+const scraper = new WebScraperService();
+
+// Detect products on an SME website
+const productResults = await scraper.scrapeProducts('https://example.com');
+
+// Extract website metadata
+const metadata = scraper.extractMetadata(html);
+
+// Analyze website structure complexity
+const structure = scraper.analyzeStructure(html);
+
+// Detect contact information
+const contactInfo = scraper.detectContactInfo(html);
 ```
 
 ## Dashboard

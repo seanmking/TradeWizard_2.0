@@ -7,219 +7,143 @@ const cheerio = require('cheerio');
 const logger = require('./logger');
 
 /**
- * Detect products from HTML content using DOM analysis
+ * Detect products from HTML content using DOM-based techniques
  * @param {Array} htmlContents - Array of objects with url and html properties
- * @returns {Array} - Detected products
+ * @returns {Array} - Detected products with properties
  */
-async function detectDomProducts(htmlContents) {
+function detectDomProducts(htmlContents) {
+  logger.info(`Starting DOM-based product detection on ${htmlContents.length} pages`);
+  
   if (!Array.isArray(htmlContents) || htmlContents.length === 0) {
     logger.warn('No HTML content provided for DOM product detection');
     return [];
   }
   
-  try {
-    logger.info(`Starting DOM-based product detection for ${htmlContents.length} pages`);
+  const allProducts = [];
+  
+  for (const { url, html } of htmlContents) {
+    if (!html) continue;
     
-    const allProducts = [];
-    
-    // Process each HTML content
-    for (const { url, html } of htmlContents) {
-      if (!html) {
-        logger.warn(`No HTML content for ${url}, skipping DOM product detection`);
-        continue;
-      }
+    try {
+      logger.info(`Analyzing DOM structure for products in ${url}`);
       
-      // Load HTML into cheerio
       const $ = cheerio.load(html);
       
-      // Extract products using DOM patterns
-      const productsFromPage = extractProductsFromDOM($, url);
+      // Log the page structure to understand what we're working with
+      logger.debug(`Page structure summary for ${url}:
+        - Total elements: ${$('*').length}
+        - Potential product containers: ${$('[class*="product"], [class*="item"], .card, [id*="product"]').length}
+        - Images: ${$('img').length}
+        - Links: ${$('a').length}
+        - Headers: ${$('h1, h2, h3, h4').length}
+      `);
       
-      if (productsFromPage.length > 0) {
-        logger.info(`Found ${productsFromPage.length} products from ${url} using DOM analysis`);
-        allProducts.push(...productsFromPage);
+      // Try multiple detection strategies
+      const products = [];
+      
+      // Strategy 1: Look for common product containers
+      const productContainers = extractProductContainers($, url);
+      products.push(...productContainers);
+      logger.info(`Found ${productContainers.length} products using container strategy on ${url}`);
+      
+      // Strategy 2: Look for product grids/lists
+      const productGridItems = extractProductGridItems($, url);
+      products.push(...productGridItems);
+      logger.info(`Found ${productGridItems.length} products using grid/list strategy on ${url}`);
+      
+      // Strategy 3: Look for heading + image + text patterns
+      const headingImagePairs = extractHeadingImagePairs($, url);
+      products.push(...headingImagePairs);
+      logger.info(`Found ${headingImagePairs.length} products using heading/image strategy on ${url}`);
+      
+      // Add URL to all products
+      for (const product of products) {
+        product.sourceUrl = url;
+        // For relative URLs, make them absolute
+        if (product.url && !product.url.startsWith('http')) {
+          product.url = new URL(product.url, url).toString();
+        }
+        if (product.images) {
+          product.images = product.images.map(imgUrl => 
+            imgUrl.startsWith('http') ? imgUrl : new URL(imgUrl, url).toString()
+          );
+        }
       }
+      
+      // Add products from this page to the overall collection
+      allProducts.push(...products);
+      
+    } catch (error) {
+      logger.error(`Error in DOM detection for ${url}: ${error.message}`);
     }
-    
-    // Process the products to split combined names and normalize
-    const processedProducts = splitCombinedProducts(allProducts);
-    
-    // Remove duplicates
-    const uniqueProducts = deduplicateProducts(processedProducts);
-    
-    logger.info(`DOM-based detection found ${uniqueProducts.length} unique products after processing`);
-    return uniqueProducts;
-  } catch (error) {
-    logger.error(`Error in DOM product detection: ${error.message}`);
-    return [];
   }
+  
+  // Deduplicate products
+  const uniqueProducts = [];
+  const seen = new Set();
+  
+  for (const product of allProducts) {
+    const key = `${product.name}|${product.sourceUrl}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueProducts.push(product);
+    }
+  }
+  
+  logger.info(`DOM-based detection found ${uniqueProducts.length} unique products across all pages`);
+  return uniqueProducts;
 }
 
 /**
- * Extract products from DOM using common patterns
- * @param {CheerioStatic} $ - Cheerio instance
- * @param {string} url - URL of the page
- * @returns {Array} - Extracted products
+ * Extract products from common container elements
  */
-function extractProductsFromDOM($, url) {
+function extractProductContainers($, url) {
   const products = [];
   
-  // Product pattern 1: Product cards with clear structure
-  $('.product, [class*="product"], .item, [class*="item"]').each((i, el) => {
-    const $el = $(el);
-    
-    // Skip if this is part of a navigation or menu
-    if ($el.parents('nav, header, footer, [class*="menu"], [class*="navigation"]').length > 0) {
-      return;
-    }
-    
-    const name = $el.find('h2, h3, h4, .title, .name, [class*="title"], [class*="name"]').first().text().trim();
-    const description = $el.find('p, .description, [class*="description"]').first().text().trim();
-    const image = $el.find('img').attr('src') || '';
-    const price = $el.find('.price, [class*="price"]').first().text().trim();
-    
-    if (name && name.length > 2) {
-      products.push({
-        name,
-        description: description || '',
-        image: normalizeImageUrl(image, url),
-        price: price || '',
-        category: detectCategory($, $el),
-        confidence: 'medium'
-      });
-    }
-  });
+  // Common product container selectors
+  const selectors = [
+    '.product', '.product-item', '.product-card', 
+    '.woocommerce-product', '.shopify-product',
+    '[class*="product-"]', '[class*="product_"]',
+    '.item:has(img)', '.card:has(img, h2, h3, .price)',
+    '.service, .service-item', '.offering',
+    // WooCommerce specific
+    '.products li', 
+    // Shopify specific
+    '.product-grid-item',
+    // Generic listings
+    'ul.products > li', '.product-list > div',
+    '.items > div', '.grid > div:has(img, h3)'
+  ];
   
-  // Product pattern 2: Tables with product listings
-  $('table').each((i, table) => {
-    const headers = [];
-    let nameIndex = -1;
-    let descIndex = -1;
-    let priceIndex = -1;
-    
-    // Extract table headers
-    $(table).find('th').each((i, th) => {
-      const header = $(th).text().trim().toLowerCase();
-      headers.push(header);
-      
-      if (header.includes('product') || header.includes('name') || header.includes('item')) {
-        nameIndex = i;
-      } else if (header.includes('description') || header.includes('detail')) {
-        descIndex = i;
-      } else if (header.includes('price') || header.includes('cost')) {
-        priceIndex = i;
-      }
-    });
-    
-    // Process table rows if we found a name column
-    if (nameIndex >= 0) {
-      $(table).find('tr').each((i, tr) => {
-        // Skip header row
-        if (i === 0 && headers.length > 0) return;
+  // Try each selector
+  selectors.forEach(selector => {
+    try {
+      $(selector).each((i, el) => {
+        const $el = $(el);
         
-        const cells = $(tr).find('td');
+        // Skip elements that are too small or likely navigation elements
+        if ($el.find('img').length === 0 && $el.find('h1, h2, h3, h4, .title, .name').length === 0) {
+          return;
+        }
         
-        if (cells.length > nameIndex) {
-          const name = $(cells[nameIndex]).text().trim();
-          const description = descIndex >= 0 && cells.length > descIndex ? $(cells[descIndex]).text().trim() : '';
-          const price = priceIndex >= 0 && cells.length > priceIndex ? $(cells[priceIndex]).text().trim() : '';
-          
-          if (name && name.length > 2) {
-            products.push({
-              name,
-              description,
-              image: '',
-              price,
-              category: detectCategory($, $(tr)),
-              confidence: 'medium'
-            });
-          }
+        // Extract product data
+        const product = {
+          name: extractName($el),
+          description: extractDescription($el),
+          price: extractPrice($el),
+          images: extractImages($el),
+          detectionMethod: 'dom-container',
+          confidence: 0.7
+        };
+        
+        // Only add if we found at least a name
+        if (product.name) {
+          products.push(product);
         }
       });
-    }
-  });
-  
-  // Product pattern 3: Lists of products
-  $('ul, ol').each((i, list) => {
-    const $list = $(list);
-    
-    // Skip navigation lists
-    if ($list.parents('nav, header, footer, [class*="menu"], [class*="navigation"]').length > 0) {
-      return;
-    }
-    
-    // Check if this is likely a product list
-    const listText = $list.text().toLowerCase();
-    const isPotentialProductList = /product|item|offering|service|solution/.test(listText);
-    
-    if (isPotentialProductList) {
-      $list.find('li').each((i, li) => {
-        const $li = $(li);
-        
-        // Get name from strong/bold text or first text node
-        let name = $li.find('strong, b').first().text().trim();
-        if (!name) {
-          name = $li.clone().children().remove().end().text().trim();
-        }
-        if (!name) {
-          name = $li.text().trim();
-        }
-        
-        // Get description from the rest of the content
-        let description = '';
-        if ($li.find('p').length > 0) {
-          description = $li.find('p').first().text().trim();
-        } else if (name !== $li.text().trim()) {
-          description = $li.text().trim().replace(name, '').trim();
-        }
-        
-        if (name && name.length > 2 && !/^[0-9.]+$/.test(name)) {
-          products.push({
-            name,
-            description,
-            image: '',
-            price: '',
-            category: detectCategory($, $li),
-            confidence: 'low' // Lower confidence for list-based detection
-          });
-        }
-      });
-    }
-  });
-  
-  // Product pattern 4: Heading followed by description
-  $('h2, h3, h4').each((i, heading) => {
-    const $heading = $(heading);
-    
-    // Skip navigation or footer headings
-    if ($heading.parents('nav, header, footer, [class*="menu"], [class*="navigation"]').length > 0) {
-      return;
-    }
-    
-    const headingText = $heading.text().trim();
-    if (!headingText || headingText.length < 3) return;
-    
-    // Check if this heading is likely a product
-    const isPotentialProduct = /product|item|offering|service|solution/i.test(headingText) || 
-                              $heading.parents('[class*="product"], [class*="item"]').length > 0;
-    
-    if (isPotentialProduct) {
-      let description = '';
-      let $nextEl = $heading.next();
-      
-      // Get description from next paragraph or div
-      if ($nextEl.is('p, div')) {
-        description = $nextEl.text().trim();
-      }
-      
-      products.push({
-        name: headingText,
-        description,
-        image: $heading.parent().find('img').first().attr('src') || '',
-        price: '',
-        category: detectCategory($, $heading),
-        confidence: 'low'
-      });
+    } catch (error) {
+      logger.warn(`Error with selector "${selector}": ${error.message}`);
     }
   });
   
@@ -227,133 +151,137 @@ function extractProductsFromDOM($, url) {
 }
 
 /**
- * Split any products with combined names into separate products
- * @param {Array} products - Products that might have combined names
- * @returns {Array} - Array with split products
+ * Extract products from grid or list layouts
  */
-function splitCombinedProducts(products) {
-  const result = [];
+function extractProductGridItems($, url) {
+  const products = [];
   
-  for (const product of products) {
-    const name = product.name;
-    
-    // Check for product names that might contain multiple products
-    if (name.includes(' and ') || name.includes(' & ') || name.includes(',')) {
-      // Split the name
-      const parts = name.split(/\s+(?:and|&|,)\s+/i);
-      
-      // Create separate products for each part
-      for (const part of parts) {
-        const cleanName = part.trim().replace(/Order\s+Your\s+|Today$|Get\s+|Buy\s+/gi, '');
+  // 1. Find potential grids or lists
+  const gridContainers = [
+    '.grid', '.products', '.product-grid', '.product-list',
+    '.items', '.listing', 'ul.products', '.card-group',
+    '.row:has(> div > img)', '.row:has(> div[class*="col"] > img)'
+  ];
+  
+  gridContainers.forEach(gridSelector => {
+    try {
+      $(gridSelector).each((i, grid) => {
+        const $grid = $(grid);
         
-        if (cleanName && cleanName.length > 3) {
-          result.push({
-            ...product,
-            name: cleanName
+        // 2. Get all immediate children that could be grid items
+        const $items = $grid.children('div, li, article');
+        
+        // If we have multiple similar structured items, it's likely a product grid
+        if ($items.length > 1) {
+          logger.debug(`Found potential product grid with ${$items.length} items using "${gridSelector}"`);
+          
+          $items.each((j, item) => {
+            const $item = $(item);
+            
+            // Extract product data
+            const product = {
+              name: extractName($item),
+              description: extractDescription($item),
+              price: extractPrice($item),
+              images: extractImages($item),
+              url: $item.find('a').attr('href'),
+              detectionMethod: 'dom-grid',
+              confidence: 0.6
+            };
+            
+            // Only add if we found at least a name
+            if (product.name) {
+              products.push(product);
+            }
           });
         }
-      }
-    } else {
-      // Clean up the product name anyway
-      const cleanName = name.replace(/Order\s+Your\s+|Today$|Get\s+|Buy\s+/gi, '').trim();
-      if (cleanName && cleanName.length > 0) {
-        result.push({
-          ...product,
-          name: cleanName
-        });
-      } else {
-        result.push(product); // Keep original if cleaning creates empty name
-      }
+      });
+    } catch (error) {
+      logger.warn(`Error with grid selector "${gridSelector}": ${error.message}`);
     }
-  }
+  });
   
-  return result;
+  return products;
 }
 
 /**
- * Remove duplicate products
- * @param {Array} products - Products list that might contain duplicates
- * @returns {Array} - Deduplicated products
+ * Extract products based on heading + image patterns
  */
-function deduplicateProducts(products) {
-  const uniqueProducts = new Map();
+function extractHeadingImagePairs($, url) {
+  const products = [];
   
-  // Process products to identify duplicates
-  for (const product of products) {
-    const normalizedName = normalizeProductName(product.name);
+  // Look for heading elements that might indicate products
+  $('h1, h2, h3, h4').each((i, heading) => {
+    const $heading = $(heading);
+    const headingText = $heading.text().trim();
     
-    if (uniqueProducts.has(normalizedName)) {
-      // Merge with existing product
-      const existing = uniqueProducts.get(normalizedName);
-      
-      // Use longer description
-      if (product.description && product.description.length > (existing.description?.length || 0)) {
-        existing.description = product.description;
-      }
-      
-      // Use image if available
-      if (product.image && !existing.image) {
-        existing.image = product.image;
-      }
-      
-      // Use price if available
-      if (product.price && !existing.price) {
-        existing.price = product.price;
-      }
-      
-      // Use category if available
-      if (product.category && !existing.category) {
-        existing.category = product.category;
-      }
-    } else {
-      // Add new product
-      uniqueProducts.set(normalizedName, { ...product });
+    // Skip very short headings or ones that are likely navigation
+    if (headingText.length < 3 || $heading.closest('nav, header, footer').length > 0) {
+      return;
     }
-  }
+    
+    // Look for images near the heading
+    const $parent = $heading.parent();
+    const $grandparent = $parent.parent();
+    const $section = $heading.closest('section, article, div.section');
+    
+    // Check surrounding elements for images
+    const nearbyContainers = [$parent, $grandparent, $section].filter(Boolean);
+    
+    for (const $container of nearbyContainers) {
+      const $img = $container.find('img').first();
+      
+      if ($img.length > 0) {
+        // If we have a heading and an image, it might be a product
+        // Also look for price patterns
+        const priceText = extractPriceText($container);
+        
+        const product = {
+          name: headingText,
+          description: extractDescription($container),
+          price: priceText,
+          images: [$img.attr('src')].filter(Boolean),
+          detectionMethod: 'dom-heading-image',
+          confidence: 0.5
+        };
+        
+        // Add to products list
+        products.push(product);
+        break; // Only extract one product per heading
+      }
+    }
+  });
   
-  return Array.from(uniqueProducts.values());
+  return products;
 }
 
 /**
- * Normalize product name for comparison
- * @param {string} name - Raw product name
- * @returns {string} - Normalized product name
+ * Extract product name from element
  */
-function normalizeProductName(name) {
-  return name
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Detect product category from context
- * @param {CheerioStatic} $ - Cheerio instance
- * @param {Cheerio} $el - Element to check
- * @returns {string} - Detected category
- */
-function detectCategory($, $el) {
-  // Check for explicit category
-  const $category = $el.closest('[class*="category"], [class*="catalog"], [class*="department"]');
-  if ($category.length > 0) {
-    const categoryHeader = $category.find('h2, h3, h4, .title').first().text().trim();
-    if (categoryHeader) {
-      return categoryHeader;
+function extractName($el) {
+  // Try common name selectors
+  const selectors = [
+    'h1', 'h2', 'h3', 'h4', 
+    '.title', '.name', '.product-title', '.product-name',
+    '[class*="title"]', '[class*="name"]', 'a[class*="product"]'
+  ];
+  
+  for (const selector of selectors) {
+    const $name = $el.find(selector).first();
+    if ($name.length > 0) {
+      const name = $name.text().trim();
+      if (name && name.length > 2) {
+        return name;
+      }
     }
   }
   
-  // Check parent elements for category hints
-  const parentText = $el.parent().find('h2, h3, h4').first().text().trim();
-  if (parentText && parentText !== $el.text().trim()) {
-    return parentText;
-  }
-  
-  // Check for breadcrumbs
-  const $breadcrumbs = $('.breadcrumbs, .breadcrumb, [class*="breadcrumb"]');
-  if ($breadcrumbs.length > 0) {
-    const lastCrumb = $breadcrumbs.find('li').last().prev().text().trim();
-    if (lastCrumb) {
-      return lastCrumb;
+  // If no name found through selectors, use text of first link
+  const $link = $el.find('a').first();
+  if ($link.length > 0) {
+    const name = $link.text().trim();
+    if (name && name.length > 2 && !name.includes('Read more')) {
+      return name;
     }
   }
   
@@ -361,26 +289,118 @@ function detectCategory($, $el) {
 }
 
 /**
- * Normalize image URL to absolute URL
- * @param {string} imageUrl - Image URL
- * @param {string} baseUrl - Base URL for relative paths
- * @returns {string} - Normalized image URL
+ * Extract product description from element
  */
-function normalizeImageUrl(imageUrl, baseUrl) {
-  if (!imageUrl) return '';
+function extractDescription($el) {
+  // Try common description selectors
+  const selectors = [
+    'p', '.description', '.desc', '.product-description',
+    '.excerpt', '.summary', '[class*="description"]', '[class*="desc"]'
+  ];
   
-  try {
-    // Try to normalize URL
-    return new URL(imageUrl, baseUrl).href;
-  } catch (error) {
-    // Return as is if URL is invalid
-    return imageUrl;
+  for (const selector of selectors) {
+    const $desc = $el.find(selector).first();
+    if ($desc.length > 0) {
+      return $desc.text().trim();
+    }
   }
+  
+  // If no specific description element, get text from container except headings and links
+  const $clone = $el.clone();
+  $clone.find('h1, h2, h3, h4, h5, h6, a, button, .price, script, style').remove();
+  const text = $clone.text().trim();
+  
+  if (text && text.length > 10) {
+    return text;
+  }
+  
+  return '';
+}
+
+/**
+ * Extract price from element
+ */
+function extractPrice($el) {
+  // Try common price selectors
+  const selectors = [
+    '.price', '.product-price', '[class*="price"]',
+    'span:contains("£"), span:contains("$"), span:contains("€")',
+    'div:contains("£"), div:contains("$"), div:contains("€")'
+  ];
+  
+  for (const selector of selectors) {
+    try {
+      const $price = $el.find(selector).first();
+      if ($price.length > 0) {
+        return $price.text().trim();
+      }
+    } catch (error) {
+      // Skip this selector if there's an error
+    }
+  }
+  
+  return extractPriceText($el);
+}
+
+/**
+ * Extract price by looking for price patterns in text
+ */
+function extractPriceText($el) {
+  const text = $el.text();
+  
+  // Look for common price patterns
+  const patterns = [
+    /\$\s*\d+(\.\d{1,2})?/,          // $XX.XX
+    /£\s*\d+(\.\d{1,2})?/,           // £XX.XX
+    /€\s*\d+(\.\d{1,2})?/,           // €XX.XX
+    /\d+(\.\d{1,2})?\s*(USD|EUR|GBP)/, // XX.XX USD/EUR/GBP
+    /\w+\s+\d+(\.\d{1,2})?/,         // Price: XX.XX
+    /from\s+\$\s*\d+(\.\d{1,2})?/i,  // from $XX.XX
+    /from\s+£\s*\d+(\.\d{1,2})?/i,   // from £XX.XX
+    /from\s+€\s*\d+(\.\d{1,2})?/i    // from €XX.XX
+  ];
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[0].trim();
+    }
+  }
+  
+  return '';
+}
+
+/**
+ * Extract images from element
+ */
+function extractImages($el) {
+  const images = [];
+  
+  // Try to find images
+  $el.find('img').each((i, img) => {
+    const src = $(img).attr('src');
+    const dataSrc = $(img).attr('data-src');
+    
+    if (src && !src.includes('data:image') && !src.includes('blank.gif')) {
+      images.push(src);
+    } else if (dataSrc) {
+      images.push(dataSrc);
+    }
+  });
+  
+  // Also look for background images in style attributes
+  $el.find('[style*="background"]').each((i, el) => {
+    const style = $(el).attr('style') || '';
+    const match = style.match(/background(?:-image)?\s*:\s*url\(['"]?([^'")]+)['"]?\)/i);
+    
+    if (match && match[1]) {
+      images.push(match[1]);
+    }
+  });
+  
+  return images;
 }
 
 module.exports = {
-  detectDomProducts,
-  extractProductsFromDOM,
-  splitCombinedProducts,
-  deduplicateProducts
+  detectDomProducts
 }; 

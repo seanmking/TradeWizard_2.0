@@ -28,44 +28,49 @@ async function detectLlmProducts(htmlContents) {
   try {
     logger.info(`Starting LLM-based product detection for ${htmlContents.length} pages`);
     
-    // Combine content from all product pages
-    const combinedContent = {};
+    const allProducts = [];
     
-    // Extract text content from HTML for each page
+    // Process each page separately for better accuracy
     for (const { url, html } of htmlContents) {
       if (!html) continue;
       
       try {
-        const $ = cheerio.load(html);
+        // Extract content from HTML
+        const processedHtml = prepareHtmlForAnalysis(html);
         
-        // Get the main content by removing navigation, header, footer, etc.
-        $('nav, header, footer, .navigation, .menu, script, style, [class*="nav"], [class*="menu"]').remove();
+        // Build the prompt for this specific page
+        const prompt = buildEnhancedProductDetectionPrompt(url, processedHtml);
         
-        // Extract text from the remaining content
-        const textContent = $('body').text().trim().replace(/\s+/g, ' ');
+        // Call OpenAI API
+        const pageProducts = await callOpenAiApi(prompt);
         
-        // Only use the first 8000 characters to avoid token limits
-        const truncatedContent = textContent.substring(0, 8000);
+        // Add URL to each product
+        pageProducts.forEach(product => {
+          product.sourceUrl = url;
+          // Ensure required fields exist
+          product.name = product.name || 'Unknown Product';
+          product.description = product.description || '';
+          product.images = product.images || [];
+          // Normalize confidence to a number between 0 and 1
+          if (typeof product.confidence === 'string') {
+            product.confidence = normalizeConfidence(product.confidence);
+          }
+        });
         
-        combinedContent[url] = truncatedContent;
+        // Add these products to our collection
+        allProducts.push(...pageProducts);
+        
+        logger.info(`Extracted ${pageProducts.length} products from ${url}`);
       } catch (error) {
-        logger.warn(`Error extracting text from ${url}: ${error.message}`);
+        logger.warn(`Error processing ${url}: ${error.message}`);
       }
     }
     
-    // If we have no content, return empty array
-    if (Object.keys(combinedContent).length === 0) {
-      logger.warn('No valid content extracted for LLM analysis');
-      return [];
-    }
+    // Deduplicate products
+    const uniqueProducts = deduplicateProducts(allProducts);
     
-    // Build the prompt for OpenAI
-    const prompt = buildProductDetectionPrompt(combinedContent);
-    
-    // Call OpenAI API
-    const llmProducts = await callOpenAiApi(prompt);
-    
-    return llmProducts;
+    logger.info(`Final LLM product count: ${uniqueProducts.length}`);
+    return uniqueProducts;
   } catch (error) {
     logger.error(`Error in LLM product detection: ${error.message}`);
     return [];
@@ -73,38 +78,83 @@ async function detectLlmProducts(htmlContents) {
 }
 
 /**
- * Build a prompt for OpenAI to identify products
- * @param {Object} contentByUrl - Object mapping URLs to text content
+ * Prepare HTML for analysis by cleaning and simplifying it
+ */
+function prepareHtmlForAnalysis(html) {
+  try {
+    const $ = cheerio.load(html);
+    
+    // Remove elements unlikely to contain product information
+    $('script, style, noscript, svg, iframe, meta').remove();
+    
+    // Find product-related sections and prioritize them
+    let productSections = $('div[class*="product"], section[class*="product"], div[class*="catalog"], .products, .shop, .store');
+    
+    // If no specific product sections found, use the main content
+    if (productSections.length === 0) {
+      productSections = $('main, #main, .main-content, .content');
+    }
+    
+    // If still nothing, use the body
+    if (productSections.length === 0) {
+      productSections = $('body');
+    }
+    
+    // Extract the HTML of product sections
+    const sectionHtml = productSections.html() || $('body').html();
+    
+    // Return clean HTML, limited to a reasonable size
+    return sectionHtml ? sectionHtml.substring(0, 15000) : '';
+  } catch (error) {
+    logger.warn(`Error preparing HTML: ${error.message}`);
+    return html.substring(0, 15000); // Fallback to truncated raw HTML
+  }
+}
+
+/**
+ * Build an enhanced prompt for OpenAI to identify products
+ * @param {string} url - URL of the page
+ * @param {string} html - Processed HTML content
  * @returns {string} - Formatted prompt
  */
-function buildProductDetectionPrompt(contentByUrl) {
-  // Extract a sample of content from each URL
-  const contentSamples = Object.entries(contentByUrl).map(([url, content]) => {
-    const sample = content.substring(0, 2000); // Limit to 2000 chars per URL
-    return `URL: ${url}\n\nContent Sample: ${sample}\n\n---`;
-  }).join('\n\n');
-  
-  return `You are a product identification expert. Analyze the following website content and extract all products or services offered by the business.
+function buildEnhancedProductDetectionPrompt(url, html) {
+  return `You are a product extraction specialist tasked with identifying products or services offered by a business on their website.
 
-${contentSamples}
+URL: ${url}
 
-Identify all distinct products or services mentioned in the above content. For each product:
-1. Provide the product name
-2. A brief description if available
-3. The product category if you can determine it
-4. Assign a confidence level (high, medium, low) based on how clearly the content identifies this as a product
+TASK:
+1. Carefully analyze the HTML below to identify all products or services
+2. For each product, extract:
+   - name: The product name
+   - description: A brief description
+   - price: The price (if available)
+   - category: Product category or type
+   - images: Array of image URLs if present in the HTML
+   - attributes: Any additional attributes (size, color, material, etc.)
 
-Return the results as a JSON array of objects with the following structure:
+INSTRUCTIONS:
+- Focus only on actual products or services, not navigation elements or website features
+- Include all product details you can find, especially unique features
+- Assign a confidence score (high, medium, low) based on how clearly this is a product
+- If you're unsure if something is a product, include it with low confidence
+
+RESPONSE FORMAT:
+Return a valid JSON array containing product objects. The response MUST be valid JSON that can be parsed with JSON.parse().
 [
   {
     "name": "Product Name",
-    "description": "Brief description of the product",
+    "description": "Description of the product",
+    "price": "Price (if available)",
     "category": "Product category",
+    "images": ["image_url_1", "image_url_2"],
+    "attributes": {"key1": "value1", "key2": "value2"},
     "confidence": "high|medium|low"
-  }
+  },
+  ...
 ]
 
-Only include actual products or services offered by the business. Do not include website features, company sections, or navigational elements. Focus on identifying clear products with high confidence.`;
+HTML CONTENT:
+${html}`;
 }
 
 /**
@@ -120,11 +170,15 @@ async function callOpenAiApi(prompt) {
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
       model: model,
       messages: [
-        { role: 'system', content: 'You are a product identification expert that returns precise JSON.' },
+        { 
+          role: 'system', 
+          content: 'You are a product identification expert that returns valid, parseable JSON. Always respond with a complete JSON array, even if empty.'
+        },
         { role: 'user', content: prompt }
       ],
       temperature: 0.1,
-      max_tokens: 2000
+      max_tokens: 2000,
+      response_format: { type: "json_object" } // For newer models that support this
     }, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -137,18 +191,54 @@ async function callOpenAiApi(prompt) {
     
     // Parse JSON from the response
     try {
-      // Find JSON array in the response if it's not pure JSON
-      const jsonMatch = content.match(/\[\s*\{.+\}\s*\]/s);
-      const jsonStr = jsonMatch ? jsonMatch[0] : content;
-      const products = JSON.parse(jsonStr);
+      // Find JSON array in the response
+      let jsonContent = content;
       
-      if (Array.isArray(products)) {
-        logger.info(`Successfully extracted ${products.length} products using LLM`);
-        return products;
-      } else {
-        logger.warn('LLM response was not an array');
-        return [];
+      // If the content is wrapped in a JSON object (common with response_format: json_object)
+      if (content.startsWith('{') && content.endsWith('}')) {
+        const parsed = JSON.parse(content);
+        // Check if there's a products array or similar in the response
+        if (parsed.products && Array.isArray(parsed.products)) {
+          return parsed.products;
+        } else if (parsed.results && Array.isArray(parsed.results)) {
+          return parsed.results;
+        } else if (parsed.data && Array.isArray(parsed.data)) {
+          return parsed.data;
+        }
+        
+        // If we can't find an obvious array property, look for any array
+        for (const key in parsed) {
+          if (Array.isArray(parsed[key])) {
+            return parsed[key];
+          }
+        }
+        
+        // If still nothing, the whole response might be structured differently
+        return []; // Return empty array as fallback
       }
+      
+      // Check if content is a JSON array
+      if (content.startsWith('[') && content.endsWith(']')) {
+        const products = JSON.parse(content);
+        if (Array.isArray(products)) {
+          logger.info(`Successfully extracted ${products.length} products using LLM`);
+          return products;
+        }
+      }
+      
+      // Try to find JSON array in the response
+      const jsonMatch = content.match(/\[\s*\{.+\}\s*\]/s);
+      if (jsonMatch) {
+        const products = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(products)) {
+          logger.info(`Successfully extracted ${products.length} products from matched JSON`);
+          return products;
+        }
+      }
+      
+      // If we got here, we couldn't find a valid JSON array
+      logger.warn('Could not extract valid JSON array from LLM response');
+      return [];
     } catch (parseError) {
       logger.error(`Failed to parse LLM response as JSON: ${parseError.message}`);
       logger.debug(`Response content: ${content}`);
@@ -158,6 +248,72 @@ async function callOpenAiApi(prompt) {
     logger.error(`Error calling OpenAI API: ${error.message}`);
     return [];
   }
+}
+
+/**
+ * Convert string confidence levels to numeric values
+ */
+function normalizeConfidence(confidence) {
+  if (typeof confidence === 'number') return confidence;
+  
+  const confidenceStr = String(confidence).toLowerCase();
+  if (confidenceStr.includes('high')) return 0.9;
+  if (confidenceStr.includes('medium')) return 0.6;
+  if (confidenceStr.includes('low')) return 0.3;
+  return 0.5; // Default
+}
+
+/**
+ * Remove duplicate products based on name similarity
+ */
+function deduplicateProducts(products) {
+  const uniqueProducts = [];
+  const seenNames = new Set();
+  
+  for (const product of products) {
+    const normalizedName = product.name.toLowerCase().trim();
+    
+    // Check if we've seen a similar name
+    let isDuplicate = false;
+    for (const seenName of seenNames) {
+      if (areSimilarNames(normalizedName, seenName)) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    
+    if (!isDuplicate) {
+      seenNames.add(normalizedName);
+      uniqueProducts.push(product);
+    }
+  }
+  
+  return uniqueProducts;
+}
+
+/**
+ * Check if two product names are similar
+ */
+function areSimilarNames(name1, name2) {
+  // If one is a substring of the other
+  if (name1.includes(name2) || name2.includes(name1)) {
+    return true;
+  }
+  
+  // Calculate word overlap
+  const words1 = name1.split(/\s+/);
+  const words2 = name2.split(/\s+/);
+  
+  let matchCount = 0;
+  for (const word1 of words1) {
+    if (word1.length < 3) continue; // Skip short words
+    if (words2.some(word2 => word2 === word1)) {
+      matchCount++;
+    }
+  }
+  
+  // If more than 50% of words match
+  return matchCount > 0 && matchCount / Math.min(words1.length, words2.length) > 0.5;
 }
 
 module.exports = {

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import productRoutes from './routes/productRoutes';
@@ -34,7 +34,7 @@ app.get('/health', (req, res) => {
 });
 
 // Global error handler
-app.use((err, req, res, next) => {
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error(err.stack);
   res.status(500).json({
     status: 'error',
@@ -43,9 +43,5 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`TradeWizard API running on port ${PORT}`);
-});
-
-export default server;
+// Export the app instead of starting the server
+export default app;

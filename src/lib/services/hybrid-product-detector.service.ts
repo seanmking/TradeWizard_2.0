@@ -10,6 +10,7 @@ import type { CheerioAPI, Element as CheerioElement, AnyNode } from 'cheerio';
 import type { Element as DomHandlerElement } from 'domhandler';
 import { EnhancedProduct, ProductDetectionResult, ProductAnalysisMetrics } from '../types/product-detection.types';
 import { DOMProductDetector } from '../utils/dom-product-detector';
+import axios from 'axios';
 
 interface DetectionContext {
   $: CheerioAPI;
@@ -207,7 +208,6 @@ export class HybridProductDetector {
   
   /**
    * Enhance product detection using LLM
-   * This is a placeholder implementation that should be replaced with actual LLM integration
    */
   private async enhanceWithLlm(
     html: string, 
@@ -215,28 +215,111 @@ export class HybridProductDetector {
     complexity: number
   ): Promise<ProductDetectionResult> {
     try {
-      // For a real implementation, this would call an LLM API
-      // with appropriate prompting based on the HTML content
+      // Prepare HTML for LLM analysis
+      const cleanedHtml = this.prepareHtmlForLlm(html);
       
-      // This is a placeholder implementation that returns empty results
-      // It should be replaced with actual LLM integration
+      // Prepare existing products as context
+      const existingProductsContext = domProducts.length > 0 
+        ? `I've already identified these products: ${JSON.stringify(domProducts)}`
+        : "I haven't identified any products yet.";
       
-      // Mock implementation for now - in production this would be:
-      // 1. Prepare a prompt with the HTML content
-      // 2. Call the LLM API with appropriate parameters
-      // 3. Parse the response to extract products
+      // Create prompt for LLM
+      const prompt = `
+You are analyzing a website to extract product information for a business.
+Website complexity: ${complexity.toFixed(2)} (0-1 scale)
+
+TASK:
+1. Identify all products mentioned on this website
+2. For each product, extract:
+   - name: Product name
+   - description: Brief description 
+   - price: Price if available
+   - category: Product category
+   - attributes: Any additional product attributes
+   - images: URLs of product images (if in HTML)
+
+${existingProductsContext}
+
+OUTPUT FORMAT:
+Return a JSON object with this structure:
+{
+  "products": [
+    {
+      "name": "Product Name",
+      "description": "Product description",
+      "price": "Price if available",
+      "category": "Category name",
+      "attributes": { "key1": "value1", "key2": "value2" },
+      "images": ["image_url_1", "image_url_2"]
+    },
+    ... more products ...
+  ],
+  "categories": ["Category1", "Category2", ...]
+}
+
+WEBSITE HTML:
+${cleanedHtml}
+`;
       
-      // For the current implementation, just return the DOM products
-      // with a token usage estimate
-      const tokensUsed = 0; // No tokens used in this placeholder
+      // Call OpenAI API with proper type definitions
+      interface OpenAIResponse {
+        choices: Array<{
+          message: {
+            content: string;
+          };
+        }>;
+      }
+
+      const response = await axios.post<OpenAIResponse>(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: 'gpt-4',
+          messages: [
+            { role: 'system', content: 'You are a product extraction AI specialized in identifying products from website HTML.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 2000,
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+          }
+        }
+      );
+      
+      // Parse the response
+      let extractedData: any = {};
+      const content = response.data.choices[0]?.message?.content;
+      
+      if (content) {
+        // Find JSON in the response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          extractedData = JSON.parse(jsonMatch[0]);
+        }
+      }
+      
+      // Ensure the products have confidence values
+      const products = (extractedData.products || []).map((product: any) => ({
+        ...product,
+        confidence: 0.9,  // LLM extraction has high confidence
+        detectionMethod: 'llm'
+      }));
+      
+      // Calculate token usage estimates
+      const promptTokens = prompt.length / 4;  // Rough estimate
+      const completionTokens = content ? content.length / 4 : 0;
+      const tokensUsed = promptTokens + completionTokens;
       
       return {
-        products: [], // No additional products found
-        categories: [],
+        products,
+        categories: extractedData.categories || [],
         metrics: {
-          productCount: 0,
-          tokensUsed: tokensUsed,
-          confidence: 0
+          productCount: products.length,
+          tokensUsed,
+          confidence: 0.9  // LLM results typically have high confidence
         }
       };
     } catch (error) {
@@ -251,6 +334,28 @@ export class HybridProductDetector {
         }
       };
     }
+  }
+  
+  /**
+   * Prepare HTML for LLM analysis by reducing its size
+   */
+  private prepareHtmlForLlm(html: string): string {
+    // Load HTML into cheerio
+    const $ = cheerio.load(html);
+    
+    // Remove elements that are unlikely to contain product information
+    $('script, style, noscript, svg, path, iframe, meta').remove();
+    
+    // Get the simplified HTML
+    let simplifiedHtml = $.html();
+    
+    // Limit size to avoid token limit issues
+    const maxLength = 15000;
+    if (simplifiedHtml.length > maxLength) {
+      simplifiedHtml = simplifiedHtml.substring(0, maxLength) + '...';
+    }
+    
+    return simplifiedHtml;
   }
   
   /**

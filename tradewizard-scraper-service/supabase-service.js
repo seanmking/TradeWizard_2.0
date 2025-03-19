@@ -9,6 +9,10 @@ const logger = require('./logger');
 // Supabase client instance
 let supabaseClient = null;
 
+// Token counting constants for OpenAI API usage monitoring
+const AVG_TOKEN_CHARS = 4; // Average characters per token
+const TOKEN_COST_FACTOR = 0.002; // Approximate cost per 1K tokens (varies by model)
+
 /**
  * Initialize the Supabase client
  * @returns {boolean} Success status
@@ -16,7 +20,7 @@ let supabaseClient = null;
 function initSupabase() {
   try {
     const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
     if (!supabaseUrl || !supabaseKey) {
       logger.warn('Missing Supabase credentials. Database functionality will be unavailable.');
@@ -120,9 +124,26 @@ async function saveScrapedData(url, data) {
       geographic_presence: data.geographicPresence || [],
       export_markets: data.exportMarkets || [],
       export_readiness: data.exportReadiness || 0,
+      industries: data.industries || [],
+      b2b_focus: data.b2bFocus || 50,
+      international_partnerships: data.internationalPartnerships || [],
+      value_proposition: data.valueProposition || null,
+      regulatory_compliance: data.regulatoryCompliance || null,
+      supply_chain_info: data.supplyChainInfo || null,
+      minimum_order_quantities: data.minimumOrderQuantities || null,
+      shipping_capabilities: data.shippingCapabilities || null,
+      ecommerce_capabilities: data.ecommerceCapabilities || null,
+      languages_supported: data.languagesSupported || [],
+      intellectual_property: data.intellectualProperty || null,
+      innovation_capabilities: data.innovationCapabilities || null,
       strengths: data.strengths || [],
       weaknesses: data.weaknesses || [],
       recommendations: data.recommendations || [],
+      target_markets: data.targetMarkets || [],
+      compliance_gaps: data.complianceGaps || [],
+      certification_needs: data.certificationNeeds || [],
+      supply_chain_risks: data.supplyChainRisks || [],
+      market_entry_strategy: data.marketEntryStrategy || null,
       full_data: data,
       last_scraped: new Date().toISOString()
     };
@@ -200,7 +221,14 @@ async function saveProducts(websiteId, products) {
       name: product.name || 'Unknown product',
       description: product.description || '',
       category: product.category || 'General',
-      confidence: product.confidence || 'low'
+      confidence: product.confidence || 'low',
+      hs_code: product.hsCode || null,
+      pricing: product.pricing || null,
+      specifications: product.specifications || null,
+      image_urls: product.imageUrls || [],
+      certifications: product.certifications || [],
+      compliance_info: product.complianceInfo || null,
+      manufacturing_info: product.manufacturingInfo || null
     }));
     
     // Insert new products
@@ -301,87 +329,218 @@ async function updateScrapeJob(jobId, status, result = null) {
 }
 
 /**
- * Get database statistics
+ * Estimate token usage for a string of text
+ * @param {string} text - The text to estimate tokens for
+ * @returns {number} Estimated token count
+ */
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(text.length / AVG_TOKEN_CHARS);
+}
+
+/**
+ * Log API usage metrics to Supabase
+ * @param {string} apiName - The API being used (e.g., 'openai', 'other')
+ * @param {string} endpoint - The specific endpoint or model used
+ * @param {number} tokens - Number of tokens used
+ * @param {string} operation - Type of operation
+ * @returns {boolean} Success status
+ */
+async function logApiUsage(apiName, endpoint, tokens, operation) {
+  if (!supabaseClient) {
+    if (!initSupabase()) {
+      return false;
+    }
+  }
+  
+  try {
+    const { error } = await supabaseClient
+      .from('api_usage_logs')
+      .insert({
+        api_name: apiName,
+        endpoint: endpoint,
+        tokens: tokens,
+        estimated_cost: (tokens / 1000) * TOKEN_COST_FACTOR,
+        operation: operation,
+        timestamp: new Date().toISOString()
+      });
+    
+    if (error) {
+      logger.error(`Error logging API usage`, { error });
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    logger.error(`Error in logApiUsage`, { error: error.message });
+    return false;
+  }
+}
+
+/**
+ * Check if a website was recently scraped and cache is still valid
+ * @param {string} url - The website URL
+ * @param {number} maxAgeHours - Maximum age in hours for valid cache
+ * @returns {boolean} Whether the cache is valid
+ */
+async function isCacheValid(url, maxAgeHours = 24) {
+  const cachedData = await getCachedData(url);
+  
+  if (!cachedData || !cachedData.last_scraped) {
+    return false;
+  }
+  
+  const lastScraped = new Date(cachedData.last_scraped);
+  const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+  const cacheAge = Date.now() - lastScraped.getTime();
+  
+  return cacheAge < maxAgeMs;
+}
+
+/**
+ * Get stats for scraping activity and database usage
  * @returns {Object} Database statistics
  */
 async function getDatabaseStats() {
   if (!supabaseClient) {
     if (!initSupabase()) {
-      return { error: 'Database service not available' };
+      return {
+        error: 'Database not available',
+        connected: false
+      };
     }
   }
   
   try {
-    // Get website count
+    // Get counts from each table
     const { data: websiteCount, error: websiteError } = await supabaseClient
       .from('scraped_websites')
       .select('id', { count: 'exact', head: true });
     
-    // Get product count
     const { data: productCount, error: productError } = await supabaseClient
       .from('website_products')
       .select('id', { count: 'exact', head: true });
     
-    // Get job count
     const { data: jobCount, error: jobError } = await supabaseClient
       .from('scrape_jobs')
       .select('id', { count: 'exact', head: true });
     
-    // Get recent scrapes
-    const { data: recentScrapes, error: recentError } = await supabaseClient
-      .from('scraped_websites')
-      .select('url, business_name, last_scraped')
-      .order('last_scraped', { ascending: false })
+    // Get stats on API usage if the table exists
+    let apiUsage = null;
+    let totalCost = 0;
+    
+    try {
+      const { data: usageData, error: usageError } = await supabaseClient
+        .from('api_usage_logs')
+        .select('estimated_cost');
+      
+      if (!usageError && usageData) {
+        totalCost = usageData.reduce((sum, record) => sum + (record.estimated_cost || 0), 0);
+        apiUsage = {
+          totalRecords: usageData.length,
+          estimatedCost: totalCost.toFixed(2)
+        };
+      }
+    } catch (usageTableError) {
+      logger.info('API usage logging table may not exist yet');
+    }
+    
+    // Get recent scrape jobs
+    const { data: recentJobs, error: recentJobsError } = await supabaseClient
+      .from('scrape_jobs')
+      .select('*')
+      .order('created_at', { ascending: false })
       .limit(5);
     
-    if (websiteError || productError || jobError || recentError) {
-      logger.error('Error retrieving database stats', { 
-        websiteError, productError, jobError, recentError 
+    if (websiteError || productError || jobError) {
+      logger.error('Error getting database stats', { 
+        websiteError, productError, jobError 
       });
-      return { error: 'Error retrieving database statistics' };
     }
     
     return {
-      websites: websiteCount?.count || 0,
-      products: productCount?.count || 0,
-      jobs: jobCount?.count || 0,
-      recentScrapes: recentScrapes || []
+      connected: true,
+      websites: websiteCount ? websiteCount.length : 0,
+      products: productCount ? productCount.length : 0,
+      jobs: jobCount ? jobCount.length : 0,
+      recentJobs: recentJobs || [],
+      apiUsage
     };
   } catch (error) {
     logger.error('Error in getDatabaseStats', { error: error.message });
-    return { error: error.message };
+    return {
+      error: error.message,
+      connected: false
+    };
   }
 }
 
 /**
- * Normalize a URL for storage
+ * Delete cached data for a URL
+ * @param {string} url - The website URL to clear from cache
+ * @returns {boolean} Success status
+ */
+async function clearCachedData(url) {
+  if (!supabaseClient) {
+    if (!initSupabase()) {
+      return false;
+    }
+  }
+  
+  try {
+    const normalizedUrl = normalizeUrl(url);
+    
+    const { error } = await supabaseClient
+      .from('scraped_websites')
+      .delete()
+      .eq('url', normalizedUrl);
+    
+    if (error) {
+      logger.error(`Error clearing cached data for ${normalizedUrl}`, { error });
+      return false;
+    }
+    
+    logger.info(`Cleared cached data for ${normalizedUrl}`);
+    return true;
+  } catch (error) {
+    logger.error(`Error in clearCachedData for ${url}`, { error: error.message });
+    return false;
+  }
+}
+
+/**
+ * Normalize a URL for consistent database storage
  * @param {string} url - The URL to normalize
  * @returns {string} Normalized URL
  */
 function normalizeUrl(url) {
+  if (!url) return '';
+  
+  // Ensure URL has a protocol
+  let normalizedUrl = url.trim();
+  if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+    normalizedUrl = 'https://' + normalizedUrl;
+  }
+  
   try {
-    // Add https:// if missing
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
+    // Parse URL to normalize it
+    const parsedUrl = new URL(normalizedUrl);
     
     // Remove trailing slash
-    url = url.replace(/\/$/, '');
-    
-    // Parse the URL
-    const parsedUrl = new URL(url);
-    
-    // Remove 'www.' if present
     let hostname = parsedUrl.hostname;
+    
+    // Remove www. prefix if present
     if (hostname.startsWith('www.')) {
       hostname = hostname.substring(4);
-      url = url.replace(parsedUrl.hostname, hostname);
     }
     
-    return url;
+    return hostname;
   } catch (error) {
-    logger.warn(`Error normalizing URL ${url}`, { error: error.message });
-    return url;
+    // If URL parsing fails, just return cleaned original
+    return normalizedUrl
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/$/, '');
   }
 }
 
@@ -389,7 +548,13 @@ module.exports = {
   initSupabase,
   getCachedData,
   saveScrapedData,
+  saveProducts,
   createScrapeJob,
   updateScrapeJob,
-  getDatabaseStats
+  getDatabaseStats,
+  normalizeUrl,
+  estimateTokens,
+  logApiUsage,
+  isCacheValid,
+  clearCachedData
 }; 

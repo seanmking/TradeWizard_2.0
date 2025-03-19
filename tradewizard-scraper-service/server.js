@@ -13,7 +13,7 @@ const supabaseService = require('./supabase-service');
 // Initialize Express app
 const app = express();
 // Force port 3002 to avoid conflict with other services
-const PORT = 3002;
+const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(cors());
@@ -23,11 +23,71 @@ app.use(express.json());
  * Health Check Endpoint
  * GET /health
  */
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  // Test database connectivity
+  let dbStatus = {
+    connected: false,
+    message: 'Supabase connection not configured'
+  };
+  
+  try {
+    // Check Supabase credentials
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      logger.warn('Missing Supabase credentials', {
+        url: !!process.env.SUPABASE_URL,
+        key: !!process.env.SUPABASE_SERVICE_ROLE_KEY
+      });
+      dbStatus.message = 'Missing Supabase credentials';
+    } else if (process.env.SUPABASE_SERVICE_ROLE_KEY.includes('role":"anon"')) {
+      logger.warn('Using anon key instead of service_role key');
+      dbStatus.message = 'Using anon key instead of service_role key';
+    } else {
+      if (supabaseService.initSupabase()) {
+        // Get basic DB stats to verify connectivity
+        const stats = await supabaseService.getDatabaseStats();
+        dbStatus = {
+          connected: stats.connected,
+          message: stats.error ? `Database error: ${stats.error}` : 'Connected to Supabase',
+          tables: {
+            websites: stats.websites || 0,
+            products: stats.products || 0,
+            jobs: stats.jobs || 0
+          }
+        };
+      }
+    }
+  } catch (error) {
+    logger.error('Database connection error', { 
+      error: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    dbStatus = {
+      connected: false,
+      message: `Database connection error: ${error.message}`
+    };
+  }
+  
+  // Check OpenAI API configuration
+  const openaiStatus = {
+    configured: !!process.env.OPENAI_API_KEY && 
+                process.env.OPENAI_API_KEY !== 'mock-api-key' &&
+                process.env.OPENAI_API_KEY !== 'sk-your-openai-api-key',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    message: process.env.OPENAI_API_KEY ? 
+             (process.env.OPENAI_API_KEY.startsWith('sk-') ? 
+              'API key configured' : 
+              'Invalid API key format') : 
+             'No API key configured'
+  };
+  
   res.status(200).json({
     status: 'ok',
     message: 'Scraper service is running',
-    version: '2.0'
+    version: '2.0',
+    database: dbStatus,
+    openai: openaiStatus,
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -185,48 +245,40 @@ app.get('/completeness', async (req, res) => {
     });
   }
   
+  // Initialize Supabase if needed
+  if (!supabaseService.initSupabase()) {
+    return res.status(500).json({
+      error: 'Database service not available'
+    });
+  }
+  
   try {
-    let data;
-    let dataSource = 'fresh';
-    let lastUpdated = new Date().toISOString();
+    const cachedData = await supabaseService.getCachedData(url);
     
-    // Try to get data from cache first
-    if (supabaseService.initSupabase()) {
-      const cachedData = await supabaseService.getCachedData(url);
-      
-      if (cachedData && cachedData.full_data) {
-        data = cachedData.full_data;
-        dataSource = 'cache';
-        lastUpdated = cachedData.last_scraped;
-        logger.info(`Using cached data for completeness check of ${url}`);
-      }
+    if (!cachedData) {
+      return res.status(404).json({
+        error: 'No data found for this URL',
+        message: 'Please analyze the website first'
+      });
     }
     
-    // If no cached data, scrape fresh
-    if (!data) {
-      logger.info(`No cached data found, scraping fresh data for ${url}`);
-      data = await scrapeWebsite(url, { maxPages: 5, maxDepth: 2 });
-      dataSource = 'fresh';
-    }
-    
-    // Assess completeness
-    const completeness = assessDataCompleteness(data);
-    completeness.dataSource = dataSource;
-    completeness.lastUpdated = lastUpdated;
+    // Assess data completeness
+    const completeness = assessDataCompleteness(cachedData);
     
     res.status(200).json(completeness);
   } catch (error) {
-    logger.error(`Error checking data completeness for ${url}`, { error: error.message });
+    logger.error(`Error assessing completeness for ${url}`, { error: error.message });
     res.status(500).json({
-      error: 'Error checking data completeness',
+      error: 'Error assessing data completeness',
       message: error.message
     });
   }
 });
 
 /**
- * Database Stats Endpoint
+ * Stats Endpoint
  * GET /stats
+ * Returns service statistics and usage metrics
  */
 app.get('/stats', async (req, res) => {
   // Initialize Supabase if needed
@@ -238,11 +290,72 @@ app.get('/stats', async (req, res) => {
   
   try {
     const stats = await supabaseService.getDatabaseStats();
-    res.status(200).json(stats);
+    
+    res.status(200).json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      database: {
+        connected: stats.connected,
+        websites: stats.websites || 0,
+        products: stats.products || 0,
+        jobs: stats.jobs || 0,
+        recentJobs: stats.recentJobs || []
+      },
+      api: {
+        usage: stats.apiUsage || {
+          totalRecords: 0,
+          estimatedCost: '0.00'
+        }
+      }
+    });
   } catch (error) {
-    logger.error('Error retrieving database stats', { error: error.message });
+    logger.error('Error retrieving stats', { error: error.message });
     res.status(500).json({
-      error: 'Error retrieving database stats',
+      error: 'Error retrieving service statistics',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Clear Cache Endpoint
+ * POST /clear-cache?url=example.com
+ */
+app.post('/clear-cache', async (req, res) => {
+  const url = req.query.url;
+  
+  if (!url) {
+    return res.status(400).json({
+      error: 'URL parameter is required'
+    });
+  }
+  
+  // Initialize Supabase if needed
+  if (!supabaseService.initSupabase()) {
+    return res.status(500).json({
+      error: 'Database service not available'
+    });
+  }
+  
+  try {
+    const success = await supabaseService.clearCachedData(url);
+    
+    if (success) {
+      res.status(200).json({
+        message: `Cache cleared for ${url}`,
+        status: 'success'
+      });
+    } else {
+      res.status(500).json({
+        error: `Failed to clear cache for ${url}`,
+        status: 'error'
+      });
+    }
+  } catch (error) {
+    logger.error(`Error clearing cache for ${url}`, { error: error.message });
+    res.status(500).json({
+      error: 'Error clearing cache',
       message: error.message
     });
   }
@@ -463,7 +576,14 @@ function assessExportInfoCompleteness(data) {
 
 // Start the server
 app.listen(PORT, () => {
-  logger.info(`Scraper service running on port ${PORT}`);
+  logger.info(`TradeWizard Scraper Service running on port ${PORT}`);
+  
+  // Initialize database connection
+  if (supabaseService.initSupabase()) {
+    logger.info('Database connection initialized');
+  } else {
+    logger.warn('Database connection not available');
+  }
 });
 
 module.exports = app; 

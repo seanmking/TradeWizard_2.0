@@ -64,35 +64,67 @@ async function safeRequestWithFallback(url, options = {}) {
 
 /**
  * Detect products using both DOM-based and LLM-based approaches
- * @param {Array} pages - Array of page objects from the crawler
+ * @param {string} url - Base URL of website
+ * @param {Object} pageData - Crawled page data 
  * @returns {Object} Object containing products from both methods and combined unique products
  */
-async function detectProducts(pages) {
-  logger.info(`Starting hybrid product detection for ${pages.length} pages`);
+async function detectProducts(url, pageData) {
+  logger.info(`Starting hybrid product detection for ${url}`);
   
-  if (!Array.isArray(pages) || pages.length === 0) {
-    logger.warn('No pages provided for product detection');
-    return { domProducts: [], llmProducts: [], products: [] };
+  if (!pageData || !pageData.pages || !Array.isArray(pageData.pages)) {
+    logger.warn(`Invalid pageData structure: ${JSON.stringify({
+      hasData: !!pageData,
+      hasPages: pageData ? !!pageData.pages : false,
+      isArray: pageData && pageData.pages ? Array.isArray(pageData.pages) : false,
+      pageCount: pageData && pageData.pages && Array.isArray(pageData.pages) ? pageData.pages.length : 0
+    })}`);
+    return { products: [], categories: [], metrics: { productCount: 0 } };
   }
   
   try {
+    logger.info(`Starting hybrid product detection for ${pageData.pages.length} pages`);
+    
     // Extract relevant pages for product detection
-    const productPages = pages.filter(page => {
-      // Make sure page.types is an array
-      const types = Array.isArray(page.types) ? page.types : [page.types].filter(Boolean);
-      return types.includes('products');
+    // In some cases, page types might not be set correctly, so let's be more flexible
+    const productPages = pageData.pages.filter(page => {
+      // Make sure page.types is an array or convert single value to array
+      const types = Array.isArray(page.types) 
+        ? page.types 
+        : (page.types ? [page.types] : ['unknown']);
+      
+      // Add pages with 'products' type or with specific keywords in URL/HTML
+      const isProductPage = 
+        types.includes('products') || 
+        /product|shop|store|buy|purchase/i.test(page.url) ||
+        (page.html && /product-list|product-grid|add-to-cart|shop-item/i.test(page.html));
+      
+      return isProductPage;
     });
     
-    if (productPages.length === 0) {
-      logger.info('No product pages found for detection');
-      return { domProducts: [], llmProducts: [], products: [] };
+    logger.info(`Found ${productPages.length} product-related pages out of ${pageData.pages.length} total pages`);
+    
+    // If no specific product pages, use all pages
+    const pagesToProcess = productPages.length > 0 
+      ? productPages 
+      : pageData.pages;
+    
+    if (pagesToProcess.length === 0) {
+      logger.warn('No pages found for product detection');
+      return { products: [], categories: [], metrics: { productCount: 0 } };
     }
     
     // Prepare HTML content for product detection
-    const htmlContents = productPages.map(page => ({
+    const htmlContents = pagesToProcess.map(page => ({
       url: page.url,
       html: page.html
-    }));
+    })).filter(item => item.html); // Make sure there is HTML content
+    
+    logger.info(`Prepared ${htmlContents.length} pages with HTML content for processing`);
+    
+    if (htmlContents.length === 0) {
+      logger.warn('No HTML content available for product detection');
+      return { products: [], categories: [], metrics: { productCount: 0 } };
+    }
     
     // DOM-based product detection
     const domProducts = await detectDomProducts(htmlContents);
@@ -106,248 +138,123 @@ async function detectProducts(pages) {
     const uniqueProducts = mergeProducts(domProducts, llmProducts);
     logger.info(`Hybrid detection found ${uniqueProducts.length} unique products`);
     
+    // Extract categories from products
+    const categories = extractCategories(uniqueProducts);
+    logger.info(`Extracted ${categories.length} product categories`);
+    
     return {
-      domProducts,
-      llmProducts,
-      products: uniqueProducts
+      products: uniqueProducts,
+      categories: categories,
+      metrics: {
+        productCount: uniqueProducts.length,
+        categories: categories.length,
+        domProducts: domProducts.length,
+        llmProducts: llmProducts.length
+      }
     };
   } catch (error) {
     logger.error(`Failed to detect products: ${error.message}`);
-    return { domProducts: [], llmProducts: [], products: [] };
+    return { 
+      products: [], 
+      categories: [], 
+      metrics: { 
+        productCount: 0,
+        error: error.message 
+      } 
+    };
   }
 }
 
 /**
- * Extract products from the DOM using various selectors and heuristics
- * @param {Object} $ - Cheerio instance
- * @returns {Array} - Extracted products
+ * Extract categories from products
  */
-function extractDOMProducts($) {
-  const products = [];
+function extractCategories(products) {
+  const categorySet = new Set();
   
-  // Product container selectors (common patterns in e-commerce sites)
-  const productSelectors = [
-    '.product', '.product-item', '.item', '.prod-item',
-    '[class*="product"]', '[class*="Product"]',
-    '.service', '.service-item', '[class*="service"]',
-    '.offering', '.solution',
-    // Woocommerce
-    '.products li', '.woocommerce-product-gallery',
-    // Shopify
-    '.product-card', '.product-grid-item',
-    // Generic
-    '.card:has(h3, h4)', '.box:has(h3, h4)', 
-    'section:has(h2:contains("Product"), h2:contains("Service"))'
-  ];
-  
-  // Look for product containers
-  productSelectors.forEach(selector => {
-    try {
-      $(selector).each((i, el) => {
-        const product = extractProductFromElement($, el);
-        if (product && product.name) {
-          products.push(product);
-        }
-      });
-    } catch (error) {
-      // Skip errors for individual selectors
+  products.forEach(product => {
+    if (product.category) {
+      categorySet.add(product.category);
     }
   });
   
-  // If no products found, try looser detection based on headings and images
-  if (products.length === 0) {
-    try {
-      // Look for heading + image/description patterns
-      $('h2, h3, h4').each((i, el) => {
-        const heading = $(el);
-        const headingText = heading.text().trim();
-        
-        // Skip very short headings or navigational elements
-        if (headingText.length < 3 || heading.closest('nav, footer, header').length > 0) {
-          return;
-        }
-        
-        // Check if this heading has an image or paragraph nearby
-        const parent = heading.parent();
-        const hasImage = parent.find('img').length > 0;
-        const hasDescription = parent.find('p').length > 0;
-        
-        if (hasImage || hasDescription) {
-          const description = parent.find('p').first().text().trim();
-          const image = parent.find('img').first().attr('src') || '';
-          
-          products.push({
-            name: headingText,
-            description: description,
-            image: image,
-            confidence: 'low'
-          });
-        }
-      });
-    } catch (error) {
-      // Skip errors in fallback detection
-    }
-  }
-  
-  return products;
+  return Array.from(categorySet);
 }
 
 /**
- * Extract product data from a DOM element
- * @param {Object} $ - Cheerio instance
- * @param {Object} element - DOM element
- * @returns {Object|null} - Product data or null
- */
-function extractProductFromElement($, element) {
-  const el = $(element);
-  
-  // Skip elements that are too small or likely navigation
-  if (el.height < 50 || el.closest('nav, menu, .navigation').length > 0) {
-    return null;
-  }
-  
-  // Find product name
-  const nameSelectors = [
-    'h2', 'h3', 'h4', '.title', '.name', '.product-title', 
-    '.product-name', '[class*="title"]', '[class*="name"]'
-  ];
-  
-  let name = '';
-  for (const selector of nameSelectors) {
-    const nameEl = el.find(selector).first();
-    if (nameEl.length > 0) {
-      name = nameEl.text().trim();
-      break;
-    }
-  }
-  
-  // Skip if no name found
-  if (!name) return null;
-  
-  // Find product description
-  const descSelectors = [
-    'p', '.description', '.desc', '.product-description',
-    '.details', '.info', '[class*="description"]'
-  ];
-  
-  let description = '';
-  for (const selector of descSelectors) {
-    const descEl = el.find(selector).first();
-    if (descEl.length > 0) {
-      description = descEl.text().trim();
-      break;
-    }
-  }
-  
-  // Find product image
-  const imgEl = el.find('img').first();
-  const image = imgEl.length > 0 ? imgEl.attr('src') || '' : '';
-  
-  // Find product price if available
-  const priceSelectors = [
-    '.price', '.product-price', '[class*="price"]'
-  ];
-  
-  let price = '';
-  for (const selector of priceSelectors) {
-    const priceEl = el.find(selector).first();
-    if (priceEl.length > 0) {
-      price = priceEl.text().trim();
-      break;
-    }
-  }
-  
-  // Set confidence based on available data
-  let confidence = 'medium';
-  if (!description) {
-    confidence = 'low';
-  } else if (description.length > 50 && image) {
-    confidence = 'high';
-  }
-  
-  return {
-    name,
-    description,
-    image,
-    price,
-    confidence
-  };
-}
-
-/**
- * Merge products from DOM and LLM approaches, removing duplicates
- * @param {Array} domProducts - Products detected by DOM approach
- * @param {Array} llmProducts - Products detected by LLM approach
- * @returns {Array} - Merged unique products
+ * Merge products from DOM and LLM detection
+ * @param {Array} domProducts - Products from DOM detection
+ * @param {Array} llmProducts - Products from LLM detection
+ * @returns {Array} - Combined unique products
  */
 function mergeProducts(domProducts, llmProducts) {
-  // Create a map of products by name for checking duplicates
-  const productMap = new Map();
+  // Create map to track unique products by name
+  const productsMap = new Map();
   
   // Add DOM products first
   domProducts.forEach(product => {
     const normalizedName = (product.name || '').toLowerCase().trim();
     if (normalizedName) {
-      productMap.set(normalizedName, {
+      productsMap.set(normalizedName, {
         ...product,
-        confidence: product.confidence || 'medium',
-        source: 'dom'
+        confidence: getConfidenceValue(product.confidence),
+        detectionMethod: 'dom'
       });
     }
   });
   
-  // Add or merge LLM products
+  // Add or update with LLM products (LLM products have higher confidence)
   llmProducts.forEach(product => {
     const normalizedName = (product.name || '').toLowerCase().trim();
     if (!normalizedName) return;
     
-    if (productMap.has(normalizedName)) {
-      // Merge with existing product
-      const existingProduct = productMap.get(normalizedName);
-      
-      productMap.set(normalizedName, {
-        ...existingProduct,
-        // Prefer LLM description if it's longer
-        description: (product.description && product.description.length > (existingProduct.description?.length || 0))
-          ? product.description
-          : existingProduct.description,
-        // Use highest confidence
-        confidence: getHigherConfidence(existingProduct.confidence, product.confidence),
-        // Update source
-        source: 'both'
-      });
-    } else {
-      // Add new product
-      productMap.set(normalizedName, {
+    const existingProduct = productsMap.get(normalizedName);
+    
+    if (!existingProduct || getConfidenceValue(product.confidence) > getConfidenceValue(existingProduct.confidence)) {
+      productsMap.set(normalizedName, {
         ...product,
-        confidence: product.confidence || 'low',
-        source: 'llm'
+        confidence: getConfidenceValue(product.confidence),
+        detectionMethod: 'llm'
+      });
+    } else if (existingProduct) {
+      // Merge information from both sources
+      productsMap.set(normalizedName, {
+        ...existingProduct,
+        description: existingProduct.description || product.description,
+        price: existingProduct.price || product.price,
+        category: existingProduct.category || product.category,
+        images: [...new Set([...(existingProduct.images || []), ...(product.images || [])])],
+        confidence: Math.max(
+          getConfidenceValue(existingProduct.confidence),
+          getConfidenceValue(product.confidence)
+        ),
+        detectionMethod: 'hybrid'
       });
     }
   });
   
-  // Convert map to array
-  return Array.from(productMap.values());
+  return Array.from(productsMap.values());
 }
 
 /**
- * Determine the higher confidence level
- * @param {string} conf1 - First confidence level
- * @param {string} conf2 - Second confidence level
- * @returns {string} - Higher confidence level
+ * Convert confidence value to a numeric value
+ * @param {string|number} confidence - Confidence value
+ * @returns {number} - Normalized confidence value
  */
-function getHigherConfidence(conf1, conf2) {
-  const levels = { 'high': 3, 'medium': 2, 'low': 1 };
-  const level1 = levels[conf1?.toLowerCase()] || 1;
-  const level2 = levels[conf2?.toLowerCase()] || 1;
+function getConfidenceValue(confidence) {
+  if (typeof confidence === 'number') {
+    return confidence;
+  }
   
-  return level1 >= level2
-    ? conf1?.toLowerCase() || 'low'
-    : conf2?.toLowerCase() || 'low';
+  if (typeof confidence === 'string') {
+    const lower = confidence.toLowerCase();
+    if (lower.includes('high')) return 0.9;
+    if (lower.includes('medium')) return 0.6;
+    if (lower.includes('low')) return 0.3;
+  }
+  
+  return 0.5; // Default confidence
 }
 
 module.exports = {
-  detectProducts,
-  extractDOMProducts,
-  mergeProducts
+  detectProducts
 }; 

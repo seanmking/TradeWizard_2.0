@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { ProductDetectionResult } from '../types/product.types';
+import { ProductInfo } from '../types/index';
 
 class LLMProductAnalyzerService {
   private openai: OpenAI;
@@ -10,7 +10,7 @@ class LLMProductAnalyzerService {
     });
   }
 
-  async classifyProduct(productDetails: ProductDetectionResult): Promise<EnhancedProductClassification> {
+  async classifyProduct(productDetails: ProductInfo): Promise<EnhancedProductClassification> {
     const prompt = this.buildClassificationPrompt(productDetails);
 
     try {
@@ -37,14 +37,15 @@ class LLMProductAnalyzerService {
     }
   }
 
-  private buildClassificationPrompt(productDetails: ProductDetectionResult): string {
+  private buildClassificationPrompt(productDetails: ProductInfo): string {
     return `
       Analyze the following product details and provide a comprehensive classification:
 
       Product Name: ${productDetails.name}
-      Description: ${productDetails.description}
-      Website: ${productDetails.website}
-      Detected Categories: ${productDetails.categories?.join(', ') || 'None'}
+      Description: ${productDetails.description || 'Not provided'}
+      Category: ${productDetails.category || 'Not provided'}
+      Price: ${productDetails.price || 'Not provided'}
+      HS Code (if known): ${productDetails.hsCode || 'Not provided'}
 
       For this product, please provide:
       1. Precise HS Code

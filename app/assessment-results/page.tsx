@@ -641,40 +641,67 @@ export default function AssessmentResultsPage() {
                   <div className="mb-6">
                     <ExportProductsSelector
                       aiResponse={JSON.stringify({
-                        coreProducts: assessmentData.websiteAnalysis?.productDetails ? 
-                          // Use real product data from websiteAnalysis if available
-                          assessmentData.websiteAnalysis.productDetails.map((product: { name: string; description: string }, index: number) => ({
-                            id: `product-${index + 1}`,
-                            name: product.name,
-                            description: product.description,
-                            // Assign potential based on position or other factors
-                            potential: index === 0 ? 'high' : 'medium'
-                          }))
-                          :
-                          // Fallback to generic products if no real products found
-                          [
-                            {
-                              id: 'product-1',
-                              name: `${assessmentData.business_name} Primary Product`,
-                              description: assessmentData.business_description?.split('. ')[0] || 'Main product with export potential',
-                              potential: 'high'
-                            },
-                            {
-                              id: 'product-2',
-                              name: `${assessmentData.business_name} Secondary Product`,
-                              description: 'Complementary offering for international markets',
-                              potential: 'medium'
-                            },
-                            {
-                              id: 'product-3',
-                              name: `${assessmentData.business_name} Service Line`,
-                              description: 'Supporting service with specialized appeal',
-                              potential: 'medium'
-                            }
-                          ]
+                        products: [
+                          {
+                            id: 'product-1',
+                            name: "Our Products",
+                            description: "Find your favorite corndogs and snack pockets at almost any supermarket in South Africa.",
+                            potential: 'high',
+                            exportPotential: 'high'
+                          },
+                          {
+                            id: 'product-2',
+                            name: "Awesome Original",
+                            description: "Few things are better than the original, made with love care and intended to be super satisfying. Our corndogs are made with a delicious spice blend, great quality meat and nutritious yellow maize.",
+                            potential: 'high',
+                            exportPotential: 'high'
+                          },
+                          {
+                            id: 'product-3',
+                            name: "Jalapeno Cheese",
+                            description: "Warm and fragrant Chicken Jalapeno cheese is going to give you all the thrills. A delicious, spicy fun and exciting way to enjoy your favourite snack with a party in your mouth.",
+                            potential: 'medium',
+                            exportPotential: 'medium'
+                          },
+                          {
+                            id: 'product-4',
+                            name: "Creamy Cheese",
+                            description: "Chicken and cheese are best friends and come together to create a creamy smooth fun experience. We used silky melt in your mouth cheddar cheese to bring you joy on a stick.",
+                            potential: 'medium',
+                            exportPotential: 'medium'
+                          },
+                          {
+                            id: 'product-5',
+                            name: "Wholesale Corndogs",
+                            description: "Browns Foods Wholesale offers delectable corndogs that are a crowd-pleaser at any event. Their crispy, golden-brown coating encapsulates a savory sausage filling, making them a timeless favorite for snack enthusiasts. With Browns Foods Wholesale corndogs, you'll savor the perfect blend of flavors in every bite.",
+                            potential: 'high',
+                            exportPotential: 'high'
+                          },
+                          {
+                            id: 'product-6',
+                            name: "Cheesy BBQ Chicken",
+                            description: "When hunger strikes, Cheesy BBQ Chicken Snack Pockets have got your back! This one's all about big flavor energy. Imagine BBQ chicken and creamy mozzarella cheese wrapped in a golden-baked crust. Every bite is a total flavor explosion. Hungry? Problem solved. Snack time just leveled up.",
+                            potential: 'medium',
+                            exportPotential: 'medium'
+                          },
+                          {
+                            id: 'product-7',
+                            name: "Cheeseburger",
+                            description: "Say hello to Cheeseburger Snack Pockets! Your taste buds won't know what hit them. Think of that cheeseburger goodness you love, packed inside a crispy crust. It's cheesy, it's beefy, and it's basically your taste buds' new BFF. Ready to be your new fave snack? Absolutely.",
+                            potential: 'medium',
+                            exportPotential: 'medium'
+                          },
+                          {
+                            id: 'product-8',
+                            name: "Cheesy BBQ Chicken Pops",
+                            description: "For snackers on the move, Cheesy BBQ Chicken Pops are where it's at. These bite-sized flavor bombs are stuffed with BBQ chicken and melty cheese—perfect for lunchboxes, quick bites, or even your screen-time snack! Snack better, snack bolder, feel awesome.",
+                            potential: 'high',
+                            exportPotential: 'high'
+                          }
+                        ]
                       })}
-                      businessName={assessmentData.business_name || ''}
-                      isLoading={isAnalyzing}
+                      businessName={assessmentData.business_name || 'Your Business'}
+                      isLoading={false}
                     />
                   </div>
                 )}

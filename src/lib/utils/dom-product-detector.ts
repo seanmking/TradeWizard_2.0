@@ -142,7 +142,7 @@ export class DOMProductDetector {
     // Convert to array and sort by frequency
     Array.from(elementSignatures.entries())
       .filter(([_, freq]) => freq > 1)
-      .sort(([_, a], [_, b]) => b - a)
+      .sort(([_s1, a], [_s2, b]) => b - a)
       .forEach(([signature, frequency]) => {
         // Find first element matching this signature
         let found = false;

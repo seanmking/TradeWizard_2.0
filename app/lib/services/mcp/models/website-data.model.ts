@@ -14,7 +14,7 @@ export interface ContactInfo {
   phone?: string;
   address?: string;
   socialMedia?: {
-    [platform: string]: string; // e.g., { "linkedin": "url", "twitter": "url" }
+    [platform: string]: string;
   };
 }
 
@@ -58,36 +58,68 @@ export interface WebsiteData {
  * Processed website analysis result with export readiness metrics
  * This is what gets returned to the AI service
  */
-export interface EnhancedWebsiteAnalysisResult {
-  // Original fields from the existing WebsiteAnalysisResult interface
+export interface WebsiteQuality {
+  hasSsl: boolean;
+  hasMobileCompatibility: boolean;
+  hasRecentUpdates: boolean;
+  hasMultiplePages: boolean;
+}
+
+export interface ProductDetail {
+  name: string;
+  description: string;
+}
+
+export interface EnhancedProduct extends ProductDetail {
+  price: number | null;
+  category: string | null;
+  images: string[];
+  attributes: {
+    [key: string]: string | number | boolean;
+  };
+}
+
+// Base interface for website analysis results
+export interface BaseWebsiteAnalysisResult {
+  businessName: string;
+  description: string;
   productCategories: string[];
   certifications: string[];
   geographicPresence: string[];
   businessSize: 'small' | 'medium' | 'large';
   customerSegments: string[];
-  exportReadiness: number; // 0-100 score
-  
-  // Enhanced fields with more detailed information
-  businessName: string;
-  description: string;
-  productDetails: Array<{
-    name: string;
-    description: string;
-  }>;
+  exportReadiness: number;
+  productDetails: ProductDetail[];
   exportMentions: string[];
   contactInfo: ContactInfo;
   locations: string[];
-  yearFounded?: string;
   lastUpdated: Date;
-  
-  // Website quality indicators
-  websiteQuality: {
-    hasSsl: boolean;
-    hasMobileCompatibility: boolean;
-    hasRecentUpdates: boolean;
-    hasMultiplePages: boolean;
-  };
+  websiteQuality: WebsiteQuality;
 }
+
+// Enhanced product fields that come from the hybrid detection system
+export interface ProductDetectionFields {
+  url: string;
+  products: EnhancedProduct[];
+  categories: string[];
+  confidence: number;
+  analysisTime: number;
+  costIncurred: number;
+  detectionMethod: string;
+}
+
+// Basic analysis result with discriminator
+export interface BasicWebsiteAnalysisResult extends BaseWebsiteAnalysisResult {
+  analysisType: 'basic';
+}
+
+// Enhanced analysis result with discriminator
+export interface EnhancedWebsiteAnalysisResult extends BaseWebsiteAnalysisResult, ProductDetectionFields {
+  analysisType: 'enhanced';
+}
+
+// Union type for all possible analysis results
+export type WebsiteAnalysisResult = BasicWebsiteAnalysisResult | EnhancedWebsiteAnalysisResult;
 
 /**
  * Configuration options for the web scraper

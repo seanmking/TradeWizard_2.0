@@ -1,8 +1,64 @@
-# Node.js dependencies
-node_modules/
-npm-debug.log
-yarn-debug.log
-yarn-error.log
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env
+.env*.local
+.env.development
+.env.test
+.env.production
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+logs/
+*.log
+
+# Cache
+.cache/
+.npm/
+
+# Build artifacts
+dist/
+build/
+out/
+
+# API keys and secrets
+*.key
+*.pem
+*.cert
+credentials.json
+*_credentials.*
 
 # Build files
 .next/
@@ -50,14 +106,9 @@ next-env.d.ts
 .nextjs.pid
 
 # Logs
-logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# Testing
-/coverage
-/nyc_output
 
 # Temporary files
 *.tmp

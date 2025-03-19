@@ -7,25 +7,52 @@
  */
 
 import axios from 'axios';
-import { WebsiteAnalysisResult } from '../models/website-data.model';
+import { WebsiteAnalysisResult, EnhancedWebsiteAnalysisResult, BaseWebsiteAnalysisResult } from '../models/website-data.model';
 
 // Scraper service URL (should be set in environment variables)
 const SCRAPER_SERVICE_URL = process.env.SCRAPER_SERVICE_URL || 'http://localhost:3001';
 const REQUEST_TIMEOUT = 45000; // 45 seconds
 
+interface ScraperHealthResponse {
+  status: string;
+  timestamp: string;
+}
+
 /**
  * Analyze a website for business information using the standalone scraper service
  */
-export async function analyzeWebsiteWithScraperService(websiteUrl: string): Promise<WebsiteAnalysisResult> {
+export async function analyzeWebsiteWithScraperService(websiteUrl: string): Promise<EnhancedWebsiteAnalysisResult> {
   try {
     console.log(`Requesting website analysis for: ${websiteUrl}`);
     
-    const response = await axios.get(`${SCRAPER_SERVICE_URL}/analyze`, {
+    const response = await axios.get<BaseWebsiteAnalysisResult>(`${SCRAPER_SERVICE_URL}/analyze`, {
       params: { url: websiteUrl },
       timeout: REQUEST_TIMEOUT
     });
     
-    return response.data;
+    // Convert base result to enhanced result
+    const enhancedProducts = response.data.productDetails.map(detail => ({
+      name: detail.name,
+      description: detail.description,
+      price: null,
+      category: response.data.productCategories[0] || null,
+      images: [],
+      attributes: {}
+    }));
+
+    const enhancedResult: EnhancedWebsiteAnalysisResult = {
+      ...response.data,
+      analysisType: 'enhanced',
+      url: websiteUrl,
+      products: enhancedProducts,
+      categories: response.data.productCategories,
+      confidence: response.data.exportReadiness / 100,
+      analysisTime: 0,
+      costIncurred: 0,
+      detectionMethod: 'scraper-service'
+    };
+    
+    return enhancedResult;
   } catch (error: any) {
     console.error(`Website analysis failed: ${error.message}`);
     
@@ -39,7 +66,7 @@ export async function analyzeWebsiteWithScraperService(websiteUrl: string): Prom
  */
 export async function isScraperServiceAvailable(): Promise<boolean> {
   try {
-    const response = await axios.get(`${SCRAPER_SERVICE_URL}/health`, {
+    const response = await axios.get<ScraperHealthResponse>(`${SCRAPER_SERVICE_URL}/health`, {
       timeout: 5000 // Short timeout for health check
     });
     

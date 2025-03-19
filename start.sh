@@ -58,6 +58,11 @@ if [ "$MODE" == "test" ]; then
       cd backend && npm test
       exit $?
       ;;
+    "website-analysis")
+      echo "Running Website Analysis tests..."
+      bash ./test-website-analysis.sh
+      exit $?
+      ;;
     "all")
       echo "Running all tests..."
       echo "\n1. WITS API tests:"
@@ -72,6 +77,10 @@ if [ "$MODE" == "test" ]; then
       cd backend && npm test
       BACKEND_RESULT=$?
       
+      echo "\n4. Website Analysis tests:"
+      bash ./test-website-analysis.sh
+      WEBSITE_RESULT=$?
+      
       cd ..
       
       echo "\n=========================================="
@@ -79,15 +88,16 @@ if [ "$MODE" == "test" ]; then
       echo "WITS API tests: $([ $WITS_RESULT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
       echo "API tests: $([ $API_RESULT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
       echo "Backend tests: $([ $BACKEND_RESULT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
+      echo "Website Analysis tests: $([ $WEBSITE_RESULT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
       echo "=========================================="
       
       # Return failure if any test failed
-      [ $WITS_RESULT -eq 0 ] && [ $API_RESULT -eq 0 ] && [ $BACKEND_RESULT -eq 0 ]
+      [ $WITS_RESULT -eq 0 ] && [ $API_RESULT -eq 0 ] && [ $BACKEND_RESULT -eq 0 ] && [ $WEBSITE_RESULT -eq 0 ]
       exit $?
       ;;
     *)
       echo "Unknown test type: $TEST_TYPE"
-      echo "Available test types: wits-api, wits-provider, scraper, api, sarah, backend, all"
+      echo "Available test types: wits-api, wits-provider, scraper, api, sarah, backend, website-analysis, all"
       exit 1
       ;;
   esac
@@ -191,5 +201,5 @@ echo "Scraper service running at: http://localhost:3001"
 echo "Backend API running at: http://localhost:5002"
 echo "To stop all processes, run: ./stop.sh"
 echo "To run tests, use: ./start.sh test [test-type]"
-echo "Available test types: wits-api, wits-provider, scraper, api, sarah, backend, all"
+echo "Available test types: wits-api, wits-provider, scraper, api, sarah, backend, website-analysis, all"
 echo "==========================================" 

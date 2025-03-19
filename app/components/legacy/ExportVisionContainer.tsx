@@ -1,3 +1,10 @@
+/**
+ * @deprecated This component is from the pre-hybrid model implementation and is no longer in use.
+ * It has been replaced by the hybrid product detection system.
+ * Kept for reference purposes only.
+ * Moved to legacy: March 19, 2024
+ */
+
 "use client";
 
 import React, { useState, useEffect } from 'react';

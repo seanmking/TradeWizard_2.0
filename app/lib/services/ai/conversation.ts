@@ -4,6 +4,15 @@
 import { OpenAIMessage } from './openai-service';
 
 /**
+ * Communication profile for tone and style preferences
+ */
+export interface CommunicationProfile {
+  preferredTone?: 'professional' | 'friendly' | 'formal' | 'casual';
+  languageComplexity?: 'simple' | 'moderate' | 'advanced';
+  emotionalResonance?: string[];
+}
+
+/**
  * Context for the conversation, containing key assessment data
  */
 export interface ConversationContext {
@@ -22,6 +31,9 @@ export interface ConversationContext {
   motivation?: string;
   targetMarkets?: string[];
   supportedTargetMarkets?: string[];
+  
+  // Communication preferences
+  communicationProfile?: CommunicationProfile;
   
   // Assessment meta data
   currentStage?: string;

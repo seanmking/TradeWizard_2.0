@@ -1,28 +1,36 @@
 /**
  * Hybrid Product Detector Service
  * 
- * Combines DOM-based detection with LLM-based analysis to provide
- * comprehensive product detection and classification.
- * 
- * This service acts as the main entry point for product detection,
- * deciding whether to use DOM analysis, LLM enhancement, or both
- * based on detection confidence and result quality.
+ * Combines DOM-based product detection with fallback to LLM-based analysis
+ * when DOM methods have low confidence or detect few products.
  */
 
 import { WebScraperService } from './web-scraper.service';
 import { DomProductDetectorService, ProductDetectionResult } from './dom-product-detector.service';
 import { ProductInfo } from '../types';
 
-export interface HybridProductDetectionResult extends ProductDetectionResult {
-  websiteUrl: string;
-  llmEnhanced: boolean;
+export interface HybridProductDetectionResult {
+  products: ProductInfo[];
   confidence: number;
-  processingTimeMs: number;
+  method: string;
+  metrics: {
+    detectionTime: number;
+    domConfidence?: number;
+    llmConfidence?: number;
+    usedLlm: boolean;
+    productCount: number;
+  };
+  url: string;
 }
 
 export class HybridProductDetectorService {
   private webScraper: WebScraperService;
   private domDetector: DomProductDetectorService;
+  
+  // Cache to store detection results by URL and avoid redundant processing
+  private cache: Map<string, { result: HybridProductDetectionResult, timestamp: number }> = new Map();
+  // Cache expiration time (24 hours)
+  private cacheExpirationMs = 24 * 60 * 60 * 1000;
   
   constructor() {
     this.webScraper = new WebScraperService();
@@ -30,110 +38,100 @@ export class HybridProductDetectorService {
   }
   
   /**
-   * Detect products from a website using a hybrid approach
-   * @param url Website URL to analyze
-   * @param options Configuration options for detection
-   * @returns Enhanced product detection results
+   * Detect products from a URL using a hybrid approach
+   * @param url URL to analyze
+   * @param options Configuration options
+   * @returns Product detection results
    */
   public async detectProducts(
-    url: string, 
+    url: string,
     options: {
-      useLlmEnhancement?: boolean;
-      confidenceThreshold?: number;
-      maxProducts?: number;
-      useCache?: boolean;
+      useLlm?: boolean;
+      forceFresh?: boolean;
+      domConfidenceThreshold?: number;
+      minProducts?: number;
     } = {}
   ): Promise<HybridProductDetectionResult> {
     const startTime = Date.now();
     
     // Set default options
     const {
-      useLlmEnhancement = false,
-      confidenceThreshold = 0.4,
-      maxProducts = 20,
-      useCache = true
+      useLlm = true,
+      forceFresh = false,
+      domConfidenceThreshold = 0.6,
+      minProducts = 3
     } = options;
     
-    try {
-      // Step 1: Fetch website content
-      const html = await this.fetchWebsiteContent(url, useCache);
-      
-      // Step 2: Perform DOM-based detection
-      const domResults = this.domDetector.detectProducts(html);
-      
-      // Step 3: Decide if LLM enhancement is needed
-      let finalProducts = domResults.products;
-      let confidence = domResults.confidence;
-      let method = domResults.method;
-      let llmEnhanced = false;
-      
-      if (
-        useLlmEnhancement && (
-          domResults.confidence < confidenceThreshold || 
-          domResults.products.length === 0
-        )
-      ) {
-        // In a future implementation, this would call an LLM service
-        // For now, we'll just use a placeholder that enriches with HS codes
-        finalProducts = this.domDetector.enrichWithHSCodes(domResults.products);
-        llmEnhanced = true;
-        method = `${method}+llm-enhancement`;
-        
-        // Adjust confidence slightly upward for demonstration
-        confidence = Math.min(0.95, confidence + 0.1);
+    // Check cache first if not forcing fresh results
+    if (!forceFresh) {
+      const cachedResult = this.getCachedResult(url);
+      if (cachedResult) {
+        console.log(`Using cached product detection results for ${url}`);
+        return cachedResult;
       }
+    }
+    
+    try {
+      // First step: scrape the website
+      const html = await this.fetchWebsiteHtml(url);
       
-      // Step 4: Limit results if needed
-      if (finalProducts.length > maxProducts) {
-        finalProducts = finalProducts.slice(0, maxProducts);
+      // Second step: analyze with DOM-based detector
+      const domResult = this.domDetector.detectProducts(html);
+      
+      // Initialize results with DOM detection
+      let products = domResult.products;
+      let confidence = domResult.confidence;
+      let method = domResult.method;
+      let usedLlm = false;
+      
+      // If DOM detection has low confidence or found few products,
+      // and LLM usage is enabled, try to enhance with LLM
+      if (useLlm && (domResult.confidence < domConfidenceThreshold || domResult.products.length < minProducts)) {
+        // For now, just log this as Phase 2 will implement LLM enhancement
+        console.log(`DOM detection had low confidence (${domResult.confidence}) or found few products (${domResult.products.length}). Would use LLM enhancement in Phase 2.`);
+        
+        // In Phase 2, we would call LLM-based analysis here and potentially merge results
+        // For now, we'll just use DOM results
       }
       
       const endTime = Date.now();
       
-      return {
-        websiteUrl: url,
-        products: finalProducts,
+      // Construct the final result
+      const result: HybridProductDetectionResult = {
+        products,
         confidence,
         method,
-        llmEnhanced,
         metrics: {
-          ...domResults.metrics,
-          productElements: finalProducts.length
+          detectionTime: endTime - startTime,
+          domConfidence: domResult.confidence,
+          usedLlm,
+          productCount: products.length
         },
-        processingTimeMs: endTime - startTime
+        url
       };
-    } catch (error: any) {
-      console.error(`Error in hybrid product detection for ${url}:`, error.message);
       
-      // Return an empty result with error information
-      return {
-        websiteUrl: url,
-        products: [],
-        confidence: 0,
-        method: 'error',
-        llmEnhanced: false,
-        metrics: {
-          totalElements: 0,
-          productElements: 0,
-          detectionTime: 0
-        },
-        processingTimeMs: Date.now() - startTime
-      };
+      // Cache the result for future use
+      this.cacheResult(url, result);
+      
+      return result;
+    } catch (error: any) {
+      console.error(`Error detecting products from ${url}:`, error.message);
+      throw new Error(`Failed to detect products: ${error.message}`);
     }
   }
   
   /**
-   * Fetch website content, using cache if available
-   * @param url Website URL
-   * @param useCache Whether to use cached content if available
+   * Fetch website HTML content
+   * @param url URL to fetch
    * @returns HTML content
    */
-  private async fetchWebsiteContent(url: string, useCache: boolean): Promise<string> {
-    // In a real implementation, this would check a Redis cache first
-    // For now, we always fetch fresh content
+  private async fetchWebsiteHtml(url: string): Promise<string> {
     try {
       const websiteData = await this.webScraper.scrapeWebsite(url);
-      return `
+      
+      // Simulate HTML content from the fetched data
+      // This is a temporary solution until we have proper HTML content
+      const html = `
         <html>
           <head>
             <title>${websiteData.title}</title>
@@ -147,109 +145,106 @@ export class HybridProductDetectorService {
           </body>
         </html>
       `;
-    } catch (error) {
-      console.error(`Error fetching website content for ${url}:`, error);
-      throw new Error(`Failed to fetch website content: ${error}`);
+      
+      return html;
+    } catch (error: any) {
+      console.error(`Error fetching website HTML from ${url}:`, error.message);
+      throw new Error(`Failed to fetch website HTML: ${error.message}`);
     }
   }
   
   /**
-   * Analyze a specific product page to extract detailed information
-   * @param url Product page URL
-   * @returns Detailed product information
+   * Get cached result for a URL if it exists and is not expired
+   * @param url URL to check in cache
+   * @returns Cached result or undefined if not found or expired
    */
-  public async analyzeProductPage(url: string): Promise<ProductInfo> {
-    try {
-      // Fetch the product page
-      const html = await this.fetchWebsiteContent(url, true);
+  private getCachedResult(url: string): HybridProductDetectionResult | undefined {
+    const cached = this.cache.get(url);
+    
+    if (cached) {
+      const now = Date.now();
       
-      // Use DOM detector to extract product details
-      const $ = require('cheerio').load(html);
-      
-      // First check for Schema.org product markup (most reliable)
-      const schemaProduct = $('[itemtype="http://schema.org/Product"], [itemtype="https://schema.org/Product"]').first();
-      
-      if (schemaProduct.length) {
-        return {
-          name: schemaProduct.find('[itemprop="name"]').first().text().trim(),
-          price: schemaProduct.find('[itemprop="price"]').first().text().trim(),
-          description: schemaProduct.find('[itemprop="description"]').first().text().trim(),
-          category: schemaProduct.find('[itemprop="category"]').first().text().trim()
-        };
+      // Check if cache is still valid
+      if (now - cached.timestamp < this.cacheExpirationMs) {
+        return cached.result;
+      } else {
+        // Cache expired, remove it
+        this.cache.delete(url);
       }
+    }
+    
+    return undefined;
+  }
+  
+  /**
+   * Cache a detection result for a URL
+   * @param url URL to cache
+   * @param result Result to cache
+   */
+  private cacheResult(url: string, result: HybridProductDetectionResult): void {
+    this.cache.set(url, {
+      result,
+      timestamp: Date.now()
+    });
+    
+    // Implement cache size limiting
+    this.limitCacheSize();
+  }
+  
+  /**
+   * Limit the cache size to prevent memory issues
+   * Removes oldest entries if cache gets too large
+   */
+  private limitCacheSize(): void {
+    const maxCacheSize = 100; // Maximum number of entries in the cache
+    
+    if (this.cache.size > maxCacheSize) {
+      // Get and sort entries by timestamp
+      const entries = Array.from(this.cache.entries())
+        .sort((a, b) => a[1].timestamp - b[1].timestamp);
       
-      // If no Schema.org markup, look for common product page patterns
-      // This is a simplified version - a real implementation would be more robust
-      return {
-        name: $('h1').first().text().trim() || $('.product-title').first().text().trim(),
-        price: $('.price').first().text().trim() || $('.product-price').first().text().trim(),
-        description: $('.product-description').first().text().trim() || $('meta[name="description"]').attr('content') || '',
-        category: $('.breadcrumbs').text().trim() || $('.category').first().text().trim()
-      };
-    } catch (error) {
-      console.error(`Error analyzing product page ${url}:`, error);
-      throw new Error(`Failed to analyze product page: ${error}`);
+      // Remove oldest entries until we're back at the limit
+      const entriesToRemove = entries.slice(0, this.cache.size - maxCacheSize);
+      for (const [url] of entriesToRemove) {
+        this.cache.delete(url);
+      }
     }
   }
   
   /**
-   * Extract company profile information from a website
-   * @param url Website URL
-   * @returns Company profile information
+   * Clear the cache
    */
-  public async extractCompanyProfile(url: string): Promise<{
-    businessName: string;
-    industry: string;
-    products: ProductInfo[];
-    contactInfo: {
-      email?: string;
-      phone?: string;
-      address?: string;
+  public clearCache(): void {
+    this.cache.clear();
+  }
+  
+  /**
+   * Get cache statistics
+   * @returns Cache size and hit rate
+   */
+  public getCacheStats(): { size: number, maxSize: number, expirationTimeHours: number } {
+    return {
+      size: this.cache.size,
+      maxSize: 100, // Same as maxCacheSize in limitCacheSize()
+      expirationTimeHours: this.cacheExpirationMs / (1000 * 60 * 60)
     };
-  }> {
-    try {
-      // First detect products
-      const productResults = await this.detectProducts(url);
-      
-      // Fetch and analyze website content
-      const html = await this.fetchWebsiteContent(url, true);
-      const $ = require('cheerio').load(html);
-      
-      // Extract business name from title or logo alt text
-      const businessName = 
-        $('meta[property="og:site_name"]').attr('content') || 
-        $('.logo img').attr('alt') || 
-        $('title').text().trim().split('|')[0].trim();
-      
-      // Extract industry from meta tags or keywords
-      const industry = 
-        $('meta[name="industry"]').attr('content') || 
-        $('meta[property="business:industry"]').attr('content') || 
-        'Unknown';
-      
-      // Extract contact info using the web scraper service
-      const contactInfo = this.webScraper.detectContactInfo(html);
-      
-      return {
-        businessName,
-        industry,
-        products: productResults.products,
-        contactInfo: {
-          email: contactInfo.emails[0],
-          phone: contactInfo.phones[0],
-          address: contactInfo.addresses[0]
-        }
-      };
-    } catch (error) {
-      console.error(`Error extracting company profile from ${url}:`, error);
-      
-      // Return a placeholder result if extraction fails
-      return {
-        businessName: 'Unknown',
-        industry: 'Unknown',
-        products: [],
-        contactInfo: {}
-      };
+  }
+  
+  /**
+   * Clean up expired cache entries
+   * @returns Number of entries removed
+   */
+  public cleanupCache(): number {
+    const now = Date.now();
+    let removedCount = 0;
+    
+    for (const [url, cached] of this.cache.entries()) {
+      if (now - cached.timestamp >= this.cacheExpirationMs) {
+        this.cache.delete(url);
+        removedCount++;
+      }
     }
+    
+    return removedCount;
   }
 }

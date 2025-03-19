@@ -9,17 +9,24 @@ const llmAnalyzer = new LLMProductAnalyzerService();
 router.post('/detect', async (req, res) => {
   try {
     const { url } = req.body;
+    
+    // Validate input
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Invalid URL provided' });
+    }
+
     const productDetectionResult = await hybridDetector.detectProduct(url);
     
-    // Optional: LLM-based enhancement
-    const enhancedClassification = await llmAnalyzer.classifyProduct(productDetectionResult);
-    
     res.json({
+      status: 'success',
       detection: productDetectionResult,
-      classification: enhancedClassification
+      confidence: productDetectionResult.confidence || 0.5
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message 
+    });
   }
 });
 
@@ -27,9 +34,46 @@ router.post('/analyze', async (req, res) => {
   try {
     const productDetails = req.body;
     const classification = await llmAnalyzer.classifyProduct(productDetails);
-    res.json(classification);
+    res.json({
+      status: 'success',
+      classification
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message 
+    });
+  }
+});
+
+// Cache management routes
+router.get('/cache/stats', async (req, res) => {
+  try {
+    const stats = await hybridDetector.getCacheStats();
+    res.json({
+      status: 'success',
+      stats
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message 
+    });
+  }
+});
+
+router.delete('/cache/clear', async (req, res) => {
+  try {
+    const clearedItems = await hybridDetector.clearCache();
+    res.json({
+      status: 'success',
+      clearedItems
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'error', 
+      message: error.message 
+    });
   }
 });
 

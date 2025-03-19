@@ -13,7 +13,6 @@ import { processOptimizedQuery } from '../lib/services/ai/server-actions';
 import ExportVisionStatement from '../components/assessment/ExportVisionStatement';
 import ComplianceCostCalculator from '../components/assessment/ComplianceCostCalculator';
 import TimelineCalculator from '../components/assessment/TimelineCalculator';
-import ExportVisionContainer from '../components/assessment/ExportVisionContainer';
 import ExportProductsSelector from '../components/assessment/ExportProductsSelector';
 import CustomerComparisonAnalysis from '../components/assessment/CustomerComparisonAnalysis';
 
@@ -536,17 +535,104 @@ export default function AssessmentResultsPage() {
                 {/* Section 1: Export Vision Summary - Concise 3-4 sentence summary */}
                 {assessmentData && (
                   <div className="mb-6">
-                    <ExportVisionContainer
-                      aiResponse={JSON.stringify({
-                        strengths: assessmentData.insights?.filter(i => i.type === 'strength').map(i => i.content) || [],
-                        challenges: assessmentData.insights?.filter(i => i.type === 'challenge').map(i => i.content) || [],
-                        marketInsights: assessmentData.marketInsights || [],
-                        regulatoryInsights: assessmentData.regulatoryInsights || [],
-                        competitiveInsights: assessmentData.competitiveInsights || []
-                      })}
+                    {/* Vision Statement */}
+                    <ExportVisionStatement
                       businessName={assessmentData.business_name || ''}
-                      isLoading={isAnalyzing}
+                      exportMotivation={assessmentData.export_motivation || ''}
+                      targetMarkets={Array.isArray(assessmentData.target_markets) 
+                        ? assessmentData.target_markets.join(', ')
+                        : assessmentData.target_markets || ''}
+                      firstName={assessmentData.first_name}
                     />
+                    
+                    {/* Market Analysis Section */}
+                    <div className="mt-8">
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4">Market Analysis & Insights</h3>
+                      <div className="space-y-6">
+                        {/* Strengths Section */}
+                        {assessmentData.insights && assessmentData.insights.filter(i => i.type === 'strength').length > 0 && (
+                          <div className="bg-white rounded-lg p-4 border border-green-100">
+                            <h4 className="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                              <svg className="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                              Key Strengths
+                            </h4>
+                            <ul className="space-y-2">
+                              {(assessmentData.insights || [])
+                                .filter(i => i.type === 'strength')
+                                .map((strength, index) => (
+                                  <li key={index} className="flex items-start text-gray-700">
+                                    <span className="text-green-500 mr-2">•</span>
+                                    {strength.content}
+                                  </li>
+                                ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Market Insights Section */}
+                        {assessmentData.marketInsights && assessmentData.marketInsights.length > 0 && (
+                          <div className="bg-white rounded-lg p-4 border border-blue-100">
+                            <h4 className="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                              <svg className="w-5 h-5 text-blue-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                              </svg>
+                              Target Markets
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {(assessmentData.marketInsights || []).map((market, index) => {
+                                const marketData: MarketInsight = typeof market === 'string' 
+                                  ? { 
+                                      name: market,
+                                      potential: 'medium',
+                                      description: `Market opportunity in ${market}`
+                                    }
+                                  : market as MarketInsight;
+                                
+                                return (
+                                  <div key={index} className="bg-blue-50 rounded-lg p-3">
+                                    <div className="flex justify-between items-center mb-2">
+                                      <h5 className="font-medium text-gray-800">{marketData.name}</h5>
+                                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                        marketData.potential === 'high' ? 'bg-green-100 text-green-800' :
+                                        marketData.potential === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-gray-100 text-gray-800'
+                                      }`}>
+                                        {marketData.potential.charAt(0).toUpperCase() + marketData.potential.slice(1)} potential
+                                      </span>
+                                    </div>
+                                    <p className="text-sm text-gray-600">{marketData.description}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Challenges Section */}
+                        {assessmentData.insights && assessmentData.insights.filter(i => i.type === 'challenge').length > 0 && (
+                          <div className="bg-white rounded-lg p-4 border border-amber-100">
+                            <h4 className="text-md font-semibold text-gray-800 mb-3 flex items-center">
+                              <svg className="w-5 h-5 text-amber-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              Key Challenges
+                            </h4>
+                            <ul className="space-y-2">
+                              {(assessmentData.insights || [])
+                                .filter(i => i.type === 'challenge')
+                                .map((challenge, index) => (
+                                  <li key={index} className="flex items-start text-gray-700">
+                                    <span className="text-amber-500 mr-2">•</span>
+                                    {challenge.content}
+                                  </li>
+                                ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
                 

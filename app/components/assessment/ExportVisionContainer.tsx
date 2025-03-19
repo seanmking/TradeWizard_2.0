@@ -2,6 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
+import { ToneAdaptationService } from '../../lib/services/ai/tone-adaptation-service';
+import { processOptimizedQuery } from '../../lib/services/ai/server-actions';
+import { TaskType } from '../../lib/services/ai/openai-service';
 
 // Define detailed TypeScript interfaces for our data structure
 interface ExportVisionData {
@@ -153,57 +156,56 @@ const ExportVisionContainer: React.FC<ExportVisionContainerProps> = ({
   };
 
   // Format the data sections into readable paragraphs
-  const formatDataToParagraphs = (data: ExportVisionData): string => {
-    // Create a vision/mission statement instead of a summary
-    const businessNameShort = businessName.replace(/\s+/g, ' ').trim();
-    
-    // Extract product names if they appear in the strengths
-    const productNames: string[] = [];
-    data.strengths?.forEach(strength => {
-      // Look for product mentions in quotes or after possessive form of business name
-      const productMatches = strength.match(/"([^"]+)"|'([^']+)'|`([^`]+)`|(?:${businessNameShort}'s|our)\s+([^\s,]+)/gi);
-      if (productMatches) {
-        productMatches.forEach(match => {
-          const clean = match.replace(/["'`]|(?:${businessNameShort}'s|our)\s+/gi, '').trim();
-          if (clean.length > 2 && !productNames.includes(clean)) {
-            productNames.push(clean);
-          }
-        });
-      }
-    });
-    
-    // Get markets
-    const markets = data.marketInsights?.map((m: any) => 
-      typeof m === 'string' ? m : m.name || ''
-    ).filter(Boolean);
-    
-    const uniqueMarkets = markets && markets.length > 0 ? 
-      Array.from(new Set(markets)).join(', ') : 
-      'global markets';
-    
-    // Create a compelling vision statement
-    let vision = '';
-    
-    // Start with business name and vision
-    vision += `${businessNameShort} envisions becoming a recognized leader in `;
-    
-    // Add product context if available
-    if (productNames.length > 0) {
-      vision += `${productNames.join(' and ')} exports to ${uniqueMarkets}, `;
-    } else {
-      vision += `international trade, establishing a strong presence in ${uniqueMarkets}, `;
+  const formatDataToParagraphs = async (data: ExportVisionData): Promise<string> => {
+    try {
+      const toneService = new ToneAdaptationService();
+      
+      // Create base vision content
+      const baseVision = `${businessName} aims to expand internationally, focusing on ${
+        data.marketInsights && data.marketInsights.length > 0 
+          ? data.marketInsights.join(', ') 
+          : 'global markets'
+      }.`;
+
+      // Extract key strengths and focus areas
+      const strengths = data.strengths?.join(', ') || '';
+      const focus = data.marketInsights?.join(', ') || 'international markets';
+
+      // Generate vision with AI and tone adaptation
+      const prompt = `
+        Business Context:
+        - Name: ${businessName}
+        - Key Strengths: ${strengths}
+        - Target Markets: ${focus}
+        
+        Create a compelling export vision statement that:
+        1. Emphasizes the business's strengths: ${strengths}
+        2. Highlights target markets: ${focus}
+        3. Shows commitment to international growth
+        4. Maintains professional tone while being authentic
+        
+        Base vision to adapt: ${baseVision}
+      `;
+
+      const result = await processOptimizedQuery(prompt, 'follow_up' as TaskType);
+      
+      // Apply tone adaptation
+      const adaptedVision = await toneService.adaptResponseTone(
+        result.response,
+        {
+          preferredTone: 'professional',
+          languageComplexity: 'moderate',
+          emotionalResonance: ['confident', 'ambitious', 'professional']
+        },
+        await toneService.extractWebsiteToneProfile(baseVision)
+      );
+
+      return adaptedVision;
+    } catch (error) {
+      console.error("Error generating vision statement:", error);
+      // Fallback to a basic vision if generation fails
+      return `${businessName} aims to expand into international markets, leveraging its strengths and building strategic partnerships for sustainable growth.`;
     }
-    
-    // Add aspirational element
-    vision += `delivering exceptional value to international customers while driving sustainable business growth. `;
-    
-    // Add commitment statement
-    vision += `We are committed to overcoming export challenges through innovation, quality, and strategic partnerships, `;
-    
-    // Add forward-looking conclusion
-    vision += `positioning our business for long-term success in the global marketplace.`;
-    
-    return vision;
   };
 
   // Process the response and format content
@@ -217,9 +219,11 @@ const ExportVisionContainer: React.FC<ExportVisionContainerProps> = ({
       
       if (extractedData) {
         setParsedData(extractedData);
-        const formatted = formatDataToParagraphs(extractedData);
-        setFormattedContent(formatted);
-        setParseError(null);
+        // Update to handle async formatDataToParagraphs
+        formatDataToParagraphs(extractedData).then(formatted => {
+          setFormattedContent(formatted);
+          setParseError(null);
+        });
       } else {
         console.warn("Could not extract structured data from response:", aiResponse);
         setParseError("Could not process the export vision data");

@@ -11,7 +11,8 @@
     "watch": "tsc --watch",
     "test:market-intelligence": "ts-node src/test-mcp.ts",
     "test:compliance": "ts-node src/test-compliance-mcp.ts",
-    "test:compliance-simple": "ts-node src/test-compliance-mcp-simplified.ts"
+    "test:compliance-simple": "ts-node src/test-compliance-mcp-simplified.ts",
+    "test:product-detection": "ts-node src/test-product-detection.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,8 @@
   "description": "",
   "dependencies": {
     "@supabase/supabase-js": "^2.44.0",
+    "axios": "^1.6.8",
+    "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

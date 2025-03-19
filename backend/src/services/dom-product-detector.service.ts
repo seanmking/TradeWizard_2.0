@@ -297,11 +297,11 @@ export class DomProductDetectorService {
       const priceElement = $element.find(selector).first();
       if (priceElement.length) {
         price = priceElement.text().trim();
-        if (price) break;
+        break;
       }
     }
     
-    // If still no price, look for price patterns in the text
+    // If no price found through selectors, try to find price patterns in text
     if (!price) {
       const text = $element.text();
       const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
@@ -312,13 +312,13 @@ export class DomProductDetectorService {
     
     // Try to extract description
     let description = '';
-    const descriptionSelectors = [
-      '.description', '.product-description', 
-      '.item-description', '[itemprop="description"]',
-      '.short-description', 'p.desc'
+    const descSelectors = [
+      '.description', '.product-description',
+      '.short-description', '[itemprop="description"]',
+      '.product-short-description', '.item-description'
     ];
     
-    for (const selector of descriptionSelectors) {
+    for (const selector of descSelectors) {
       const descText = $element.find(selector).first().text().trim();
       if (descText) {
         description = descText;
@@ -326,27 +326,22 @@ export class DomProductDetectorService {
       }
     }
     
-    // If no description found, try the first paragraph
-    if (!description) {
-      description = $element.find('p').first().text().trim();
-    }
-    
     // Try to extract category
     let category = '';
     const categorySelectors = [
-      '.category', '[itemprop="category"]', 
-      '.product-category', '.product-type'
+      '.category', '[itemprop="category"]',
+      '.product-category', '.item-category'
     ];
     
     for (const selector of categorySelectors) {
-      const catText = $element.find(selector).first().text().trim();
-      if (catText) {
-        category = catText;
+      const categoryText = $element.find(selector).first().text().trim();
+      if (categoryText) {
+        category = categoryText;
         break;
       }
     }
     
-    // If we have a name, consider this a valid product
+    // If we have at least a name, return the product
     if (name) {
       return {
         name,
@@ -360,63 +355,64 @@ export class DomProductDetectorService {
   }
 
   /**
-   * Detect products by analyzing repeating structures in the DOM
+   * Detect products by analyzing repeating DOM structures
    * @param $ Cheerio instance
    * @returns Array of products
    */
   private detectProductsViaRepeatingStructures($: cheerio.CheerioAPI): ProductInfo[] {
     const products: ProductInfo[] = [];
     
-    // Find potential container elements
-    const containerSelectors = [
-      '.products', '.items', '.collection', 
-      '.grid', '.product-grid', '.product-list',
-      'ul.products', 'div.products', '.product-container'
+    // Look for containers with multiple children that could be product listings
+    const potentialContainers = [
+      '.products', '.product-list', '.product-grid',
+      '.items', '.item-list', '.collection', 
+      '.catalog', '.category-products'
     ];
     
-    for (const containerSelector of containerSelectors) {
+    for (const containerSelector of potentialContainers) {
       const $container = $(containerSelector).first();
       
-      if ($container.length) {
-        // Find children that might be product items
-        const children = $container.children();
+      // Skip if no container found
+      if (!$container.length) continue;
+      
+      // Get direct children that could be product items
+      const $children = $container.children();
+      
+      // Skip if too few children (not likely to be a product grid)
+      if ($children.length < 2) continue;
+      
+      // Analyze first few children to detect if they might be product items
+      let validProductCount = 0;
+      
+      // Check up to 5 items or all items, whichever is fewer
+      const maxCheck = Math.min(5, $children.length);
+      
+      for (let i = 0; i < maxCheck; i++) {
+        const $child = $($children[i]);
         
-        // We need at least 2 similar items to consider it a product list
-        if (children.length >= 2) {
-          // Get the tag name of the first child to check for consistency
-          const firstChildTagName = children.first().prop('tagName')?.toLowerCase();
-          
-          // Count items with the same tag
-          let sameTagCount = 0;
-          
-          children.each((_, child) => {
-            const tagName = $(child).prop('tagName')?.toLowerCase();
-            if (tagName === firstChildTagName) {
-              sameTagCount++;
-            }
-          });
-          
-          // If most children have the same tag, consider it a repeating structure
-          if (sameTagCount / children.length > 0.7) {
-            // Extract product info from each child
-            children.each((_, child) => {
-              // Check if child has both image and text
-              const hasImage = $(child).find('img').length > 0;
-              const hasText = $(child).text().trim().length > 10; // Arbitrary threshold
-              
-              if (hasImage && hasText) {
-                const product = this.extractProductFromElement($, child);
-                if (product && product.name) {
-                  products.push(product);
-                }
-              }
-            });
-            
-            // If we found products, break out of the containerSelector loop
-            if (products.length > 0) {
-              break;
-            }
+        // Count elements with image and text elements
+        const hasImage = $child.find('img').length > 0;
+        const hasHeading = $child.find('h1, h2, h3, h4, h5, h6, strong, b').length > 0;
+        const hasPricePattern = !!$child.text().match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
+        
+        // If has image and either heading or price, count as potential product
+        if (hasImage && (hasHeading || hasPricePattern)) {
+          validProductCount++;
+        }
+      }
+      
+      // If majority of checked items appear to be products, process all children
+      if (validProductCount >= Math.ceil(maxCheck * 0.6)) {
+        $children.each((_, child) => {
+          const product = this.extractProductFromRepeatingElement($, child);
+          if (product && product.name) {
+            products.push(product);
           }
+        });
+        
+        // If we found products, exit loop
+        if (products.length > 0) {
+          break;
         }
       }
     }
@@ -425,62 +421,131 @@ export class DomProductDetectorService {
   }
 
   /**
-   * Detect products based on image-text pairs (lowest confidence method)
+   * Extract product from an element in a repeating structure
+   * @param $ Cheerio instance
+   * @param element DOM element
+   * @returns Product info or null if not a valid product
+   */
+  private extractProductFromRepeatingElement($: cheerio.CheerioAPI, element: cheerio.Element): ProductInfo | null {
+    const $element = $(element);
+    
+    // Check if this element has the basic structure we expect for a product
+    const hasImage = $element.find('img').length > 0;
+    
+    // Skip if no image (a product listing almost always has an image)
+    if (!hasImage) return null;
+    
+    // Try to find a name (headings, strong elements, etc.)
+    let name = '';
+    const $headings = $element.find('h1, h2, h3, h4, h5, h6, strong, b');
+    
+    if ($headings.length > 0) {
+      name = $($headings[0]).text().trim();
+    } else {
+      // No explicit heading, use image alt as fallback
+      const $img = $element.find('img').first();
+      name = $img.attr('alt') || '';
+    }
+    
+    // Try to find a price (look for price pattern in text)
+    const text = $element.text();
+    const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
+    const price = priceMatch ? priceMatch[0] : '';
+    
+    // Use text content excluding the name and price as the description
+    let description = text
+      .replace(name, '')
+      .replace(price, '')
+      .trim()
+      .replace(/\s+/g, ' '); // Normalize whitespace
+    
+    // Limit description length
+    if (description.length > 150) {
+      description = description.substring(0, 147) + '...';
+    }
+    
+    // If we have a name, return the product
+    if (name) {
+      return {
+        name,
+        price,
+        description,
+        category: ''
+      };
+    }
+    
+    return null;
+  }
+
+  /**
+   * Detect products by finding image + text pairs
    * @param $ Cheerio instance
    * @returns Array of products
    */
   private detectProductsViaImageTextPairs($: cheerio.CheerioAPI): ProductInfo[] {
     const products: ProductInfo[] = [];
     
-    // Find elements with both images and text that might be products
-    $('div, article, section, li').each((_, element) => {
+    // Look for elements containing both images and text content
+    // that could potentially be products
+    $('div, li, article, section').each((_, element) => {
       const $element = $(element);
       
-      // Check if this element has an image
-      const $img = $element.find('img');
-      if ($img.length === 0) return;
+      // Skip elements that are too large (likely containers, not product items)
+      if ($element.find('*').length > 100) return;
       
-      // Check if element has enough text to be considered a product
+      // Check if element contains an image
+      const $image = $element.find('img');
+      if (!$image.length) return;
+      
+      // Check if element contains text with potential product name patterns
       const text = $element.text().trim();
-      if (text.length < 10) return;
       
-      // Check for price patterns in the text
+      // Skip if too short or too long text
+      if (text.length < 5 || text.length > 500) return;
+      
+      // Check for price pattern
       const hasPricePattern = !!text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
       
-      // Check if the image has an alt text that might be a product name
-      const altText = $img.attr('alt')?.trim();
-      const imgHasProductName = altText && altText.length > 3;
+      // Check for common product words or patterns
+      const hasProductIndicators = /buy|shop|add.?to.?cart|product|item|price/i.test(text);
       
-      // Check if there's a heading element
-      const hasHeading = $element.find('h1, h2, h3, h4, h5').length > 0;
-      
-      // Heuristic: element with image + price pattern + heading is likely a product
-      if ((hasPricePattern && (hasHeading || imgHasProductName))) {
-        // Try to extract product information
+      // If has price pattern or product indicators, treat as potential product
+      if (hasPricePattern || hasProductIndicators) {
+        // Extract product information
         let name = '';
         
-        // Try to get name from heading
-        if (hasHeading) {
-          name = $element.find('h1, h2, h3, h4, h5').first().text().trim();
-        } 
-        // Fallback to image alt text
-        else if (imgHasProductName) {
-          name = altText || '';
+        // Try to find a heading
+        const $heading = $element.find('h1, h2, h3, h4, h5, h6, strong, b');
+        if ($heading.length) {
+          name = $heading.first().text().trim();
+        } else {
+          // Use image alt as fallback
+          name = $image.attr('alt') || '';
+          
+          // Or try to extract a potential name using patterns
+          if (!name) {
+            // Look for capitalized words that could be a title
+            const nameMatch = text.match(/([A-Z][a-z]+(\s+[A-Za-z0-9]+){1,5})/);
+            if (nameMatch) {
+              name = nameMatch[0].trim();
+            }
+          }
         }
         
         // Extract price
-        let price = '';
         const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-        if (priceMatch) {
-          price = priceMatch[0];
-        }
+        const price = priceMatch ? priceMatch[0] : '';
         
-        // Create a basic description from text
-        const description = text
-          .replace(name, '')
-          .replace(price, '')
-          .trim()
-          .substring(0, 100); // Limit to first 100 chars
+        // Construct description from remaining text
+        let description = text;
+        if (name) description = description.replace(name, '');
+        if (price) description = description.replace(price, '');
+        description = description.trim().replace(/\s+/g, ' ');
+        
+        // Limit description length
+        if (description.length > 150) {
+          description = description.substring(0, 147) + '...';
+        }
         
         if (name) {
           products.push({
@@ -497,79 +562,50 @@ export class DomProductDetectorService {
   }
 
   /**
-   * Calculate a quality factor for the detected products
+   * Calculate a quality factor based on product information completeness
    * @param products Array of detected products
-   * @returns Quality factor from 0 to 1.2
+   * @returns Quality factor (0.0-1.5)
    */
   private calculateProductQualityFactor(products: ProductInfo[]): number {
     if (products.length === 0) return 0;
     
-    // Count how many products have each field
-    let nameCount = 0;
-    let priceCount = 0;
-    let descriptionCount = 0;
-    let categoryCount = 0;
-    
-    products.forEach(product => {
-      if (product.name) nameCount++;
-      if (product.price) priceCount++;
-      if (product.description) descriptionCount++;
-      if (product.category) categoryCount++;
-    });
-    
-    // Calculate completion rates
-    const nameCompletionRate = nameCount / products.length;
-    const priceCompletionRate = priceCount / products.length;
-    const descriptionCompletionRate = descriptionCount / products.length;
-    const categoryCompletionRate = categoryCount / products.length;
-    
-    // Calculate weighted quality factor
-    // Name and price are most important, description and category less so
-    const qualityFactor = 
-      (nameCompletionRate * 0.5) +
-      (priceCompletionRate * 0.3) +
-      (descriptionCompletionRate * 0.1) +
-      (categoryCompletionRate * 0.1);
-    
-    // Bonus for having many products (more likely to be accurate)
-    const productCountBonus = Math.min(0.2, products.length / 20);
-    
-    return qualityFactor + productCountBonus;
-  }
-
-  /**
-   * Try to identify HS codes for detected products
-   * @param products Array of products to analyze
-   * @returns Products with HS codes where possible
-   */
-  public enrichWithHSCodes(products: ProductInfo[]): ProductInfo[] {
-    // This is a placeholder for future integration with HS code lookup
-    // In a real implementation, this would use a database or API lookup
-    
-    // Simple rules-based approach for demo purposes
-    const enriched = products.map(product => {
-      const productCopy = { ...product };
+    const totalScore = products.reduce((score, product) => {
+      let productScore = 0;
       
-      // Extract keywords from product name and category
-      const keywords = [
-        ...(product.name?.toLowerCase().split(/\s+/) || []),
-        ...(product.category?.toLowerCase().split(/\s+/) || [])
-      ];
+      // Score based on field completeness
+      if (product.name) productScore += 0.4;
+      if (product.price) productScore += 0.3;
+      if (product.description) productScore += 0.2;
+      if (product.category) productScore += 0.1;
       
-      // Simple keyword mapping to HS codes (extremely simplified)
-      if (keywords.some(k => ['coffee', 'tea', 'mate'].includes(k))) {
-        productCopy.hsCode = '0901';
-      } else if (keywords.some(k => ['fruit', 'vegetable', 'fresh'].includes(k))) {
-        productCopy.hsCode = '0701';
-      } else if (keywords.some(k => ['clothing', 'apparel', 'wear', 'shirt', 'pants'].includes(k))) {
-        productCopy.hsCode = '6101';
-      } else if (keywords.some(k => ['furniture', 'chair', 'table', 'bed'].includes(k))) {
-        productCopy.hsCode = '9401';
+      // Bonus for high quality names (not too short, not too long)
+      if (product.name && product.name.length > 3 && product.name.length < 100) {
+        productScore += 0.1;
       }
       
-      return productCopy;
-    });
+      // Bonus for price in expected format
+      if (product.price && /^(\D?\d+([.,]\d{2})?)$/.test(product.price)) {
+        productScore += 0.1;
+      }
+      
+      return score + productScore;
+    }, 0);
     
-    return enriched;
+    // Calculate average score and apply scaling
+    // More products with good data = higher confidence
+    const averageScore = totalScore / products.length;
+    
+    // Adjust based on number of products found
+    // Too few or too many products might indicate issues
+    let countFactor = 1.0;
+    if (products.length < 3) {
+      countFactor = 0.8; // Lower confidence for very few products
+    } else if (products.length > 30) {
+      countFactor = 0.9; // Slightly lower confidence for too many products
+    } else if (products.length >= 5 && products.length <= 20) {
+      countFactor = 1.2; // Bonus for ideal range of products
+    }
+    
+    return averageScore * countFactor;
   }
 }

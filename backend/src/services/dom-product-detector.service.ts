@@ -1,611 +1,409 @@
+import { JSDOM } from 'jsdom';
+import logger from '../utils/logger';
+
 /**
- * DOM-based Product Detector Service
- * 
- * Analyzes website DOM structure to identify and extract product information
- * using pattern recognition and heuristics.
+ * Product information structure with confidence scores
  */
-
-import * as cheerio from 'cheerio';
-import { ProductInfo } from '../types';
-
-export interface ProductDetectionResult {
-  products: ProductInfo[];
+export interface DetectedProduct {
+  name: string;
+  description?: string;
+  price?: string;
+  currency?: string;
+  imageUrl?: string;
+  specifications?: Record<string, string>;
+  category?: string;
+  attributes?: Record<string, string>;
+  url?: string;
   confidence: number;
-  method: string;
-  metrics: {
-    totalElements: number;
-    productElements: number;
-    detectionTime: number;
-  };
 }
 
-export class DomProductDetectorService {
+/**
+ * Service for extracting product information from HTML using DOM-based methods
+ */
+export class DomProductDetector {
   /**
-   * Detect products from HTML content using DOM analysis
-   * @param html HTML content to analyze
-   * @returns Product detection results with confidence and metrics
+   * Analyze HTML to detect products
    */
-  public detectProducts(html: string): ProductDetectionResult {
-    const startTime = Date.now();
-    const $ = cheerio.load(html);
-    
-    // Initialize results
-    let products: ProductInfo[] = [];
-    let confidence = 0;
-    let method = 'unknown';
-    
-    // First try to detect via Schema.org markup (highest confidence)
-    const schemaProducts = this.detectProductsViaSchema($);
-    if (schemaProducts.length > 0) {
-      products = schemaProducts;
-      confidence = 0.9; // High confidence for schema-based detection
-      method = 'schema';
-    } else {
-      // Try to detect via common e-commerce patterns
-      const ecommerceProducts = this.detectProductsViaEcommercePatterns($);
-      if (ecommerceProducts.length > 0) {
-        products = ecommerceProducts;
-        confidence = 0.7; // Medium confidence for pattern-based detection
-        method = 'ecommerce-pattern';
-      } else {
-        // Try to detect via repeating structures (less reliable)
-        const repeatingProducts = this.detectProductsViaRepeatingStructures($);
-        if (repeatingProducts.length > 0) {
-          products = repeatingProducts;
-          confidence = 0.5; // Lower confidence for structure-based detection
-          method = 'repeating-structure';
-        } else {
-          // Last resort: try to find image-text pairs
-          const imageTextProducts = this.detectProductsViaImageTextPairs($);
-          if (imageTextProducts.length > 0) {
-            products = imageTextProducts;
-            confidence = 0.3; // Lowest confidence
-            method = 'image-text-pair';
-          }
-        }
+  public detectProducts(html: string, baseUrl: string): DetectedProduct[] {
+    try {
+      logger.info('Detecting products from DOM');
+      
+      const dom = new JSDOM(html, { url: baseUrl });
+      const document = dom.window.document;
+      
+      // Try different detection strategies
+      let products: DetectedProduct[] = [];
+      
+      // Strategy 1: Structured product markup (Schema.org)
+      products = this.detectSchemaOrgProducts(document, baseUrl);
+      
+      // If no products found with Schema.org, try common product patterns
+      if (products.length === 0) {
+        products = this.detectCommonProductPatterns(document, baseUrl);
       }
+      
+      // If still no products, try OpenGraph patterns which might indicate product pages
+      if (products.length === 0) {
+        products = this.detectOpenGraphProducts(document, baseUrl);
+      }
+      
+      // Resolve relative URLs and clean up data
+      return this.normalizeProducts(products, baseUrl);
+    } catch (error) {
+      logger.error('Error in DOM product detection:', error);
+      return [];
     }
-    
-    // Calculate metrics
-    const endTime = Date.now();
-    const metrics = {
-      totalElements: $('*').length,
-      productElements: products.length,
-      detectionTime: endTime - startTime
-    };
-    
-    // Apply confidence adjustments based on metrics
-    if (products.length > 0) {
-      // Adjust confidence based on product count and quality
-      const qualityFactor = this.calculateProductQualityFactor(products);
-      confidence = Math.min(0.95, confidence * qualityFactor);
-    } else {
-      confidence = 0;
-    }
-    
-    return {
-      products,
-      confidence,
-      method,
-      metrics
-    };
   }
 
   /**
-   * Detect products using Schema.org markup (highest reliability)
-   * @param $ Cheerio instance
-   * @returns Array of products
+   * Detect products using Schema.org markup
    */
-  private detectProductsViaSchema($: cheerio.CheerioAPI): ProductInfo[] {
-    const products: ProductInfo[] = [];
+  private detectSchemaOrgProducts(document: Document, baseUrl: string): DetectedProduct[] {
+    const products: DetectedProduct[] = [];
     
-    // Find elements with Product schema
-    $('[itemtype="http://schema.org/Product"], [itemtype="https://schema.org/Product"]').each((_, element) => {
-      const $element = $(element);
+    try {
+      // Look for JSON-LD schema
+      const jsonldScripts = document.querySelectorAll('script[type="application/ld+json"]');
       
-      // Extract product name
-      const name = $element.find('[itemprop="name"]').first().text().trim();
-      
-      // Extract product price
-      let price = '';
-      const priceElement = $element.find('[itemprop="price"]').first();
-      if (priceElement.length) {
-        price = priceElement.text().trim() || priceElement.attr('content') || '';
-      }
-      
-      // Extract product description
-      const description = $element.find('[itemprop="description"]').first().text().trim();
-      
-      // Extract product category
-      const category = $element.find('[itemprop="category"]').first().text().trim();
-      
-      if (name) {
-        products.push({
-          name,
-          price,
-          description,
-          category
-        });
-      }
-    });
-    
-    // Also check for JSON-LD structured data
-    $('script[type="application/ld+json"]').each((_, element) => {
-      try {
-        const jsonText = $(element).html() || '';
-        const jsonData = JSON.parse(jsonText);
-        
-        // Check if this is Product data
-        if (
-          jsonData && 
-          (jsonData['@type'] === 'Product' || 
-           (Array.isArray(jsonData['@graph']) && 
-            jsonData['@graph'].some((item: any) => item['@type'] === 'Product')))
-        ) {
-          // Handle direct Product
-          if (jsonData['@type'] === 'Product') {
-            const product = this.extractProductFromJsonLd(jsonData);
-            if (product && product.name) {
-              products.push(product);
-            }
-          } 
-          // Handle @graph with multiple items
-          else if (Array.isArray(jsonData['@graph'])) {
-            for (const item of jsonData['@graph']) {
-              if (item['@type'] === 'Product') {
-                const product = this.extractProductFromJsonLd(item);
-                if (product && product.name) {
-                  products.push(product);
-                }
+      jsonldScripts.forEach(script => {
+        try {
+          const data = JSON.parse(script.textContent || '{}');
+          
+          // Check if it's a product or has products
+          if (
+            data['@type'] === 'Product' || 
+            (Array.isArray(data['@graph']) && data['@graph'].some(item => item['@type'] === 'Product'))
+          ) {
+            const productData = data['@type'] === 'Product' 
+              ? data 
+              : data['@graph'].find(item => item['@type'] === 'Product');
+            
+            if (productData) {
+              // Extract offer information
+              let price = '';
+              let currency = '';
+              
+              if (productData.offers) {
+                const offer = Array.isArray(productData.offers) 
+                  ? productData.offers[0] 
+                  : productData.offers;
+                
+                price = offer.price || '';
+                currency = offer.priceCurrency || '';
               }
+              
+              products.push({
+                name: productData.name || '',
+                description: productData.description || '',
+                price,
+                currency,
+                imageUrl: Array.isArray(productData.image) 
+                  ? productData.image[0] 
+                  : productData.image || '',
+                category: productData.category || '',
+                url: productData.url || baseUrl,
+                confidence: 0.9 // High confidence for structured data
+              });
             }
           }
-        }
-      } catch (error) {
-        // JSON parsing error, skip this script tag
-        console.error('Error parsing JSON-LD:', error);
-      }
-    });
-    
-    return products;
-  }
-
-  /**
-   * Extract product information from JSON-LD structured data
-   * @param jsonData JSON-LD data object
-   * @returns Product info or null if invalid
-   */
-  private extractProductFromJsonLd(jsonData: any): ProductInfo | null {
-    if (!jsonData || typeof jsonData !== 'object') {
-      return null;
-    }
-    
-    // Extract product name
-    const name = jsonData.name || '';
-    
-    // Extract product price
-    let price = '';
-    if (jsonData.offers) {
-      const offers = Array.isArray(jsonData.offers) ? jsonData.offers[0] : jsonData.offers;
-      price = offers.price || '';
-      if (price && offers.priceCurrency) {
-        price = `${offers.priceCurrency} ${price}`;
-      }
-    }
-    
-    // Extract product description
-    const description = jsonData.description || '';
-    
-    // Extract product category
-    const category = jsonData.category || '';
-    
-    if (name) {
-      return {
-        name,
-        price,
-        description,
-        category
-      };
-    }
-    
-    return null;
-  }
-
-  /**
-   * Detect products using common e-commerce HTML patterns
-   * @param $ Cheerio instance
-   * @returns Array of products
-   */
-  private detectProductsViaEcommercePatterns($: cheerio.CheerioAPI): ProductInfo[] {
-    const products: ProductInfo[] = [];
-    
-    // Common product selectors used by e-commerce platforms
-    const productSelectors = [
-      '.product', 
-      '.product-item', 
-      '.item.product',
-      '.product-container',
-      '.product-card',
-      '.product-box',
-      '.product-tile',
-      '.product-grid-item',
-      '.woocommerce-product',
-      '.shopify-product',
-      '.products-grid .item',
-      '.collection-item'
-    ];
-    
-    // Try each selector and stop when we find products
-    for (const selector of productSelectors) {
-      $(selector).each((_, element) => {
-        const product = this.extractProductFromElement($, element);
-        if (product && product.name) {
-          products.push(product);
+        } catch (e) {
+          logger.warn('Error parsing JSON-LD:', e);
         }
       });
       
-      // If we found products with this selector, stop trying others
-      if (products.length > 0) {
-        break;
-      }
-    }
-    
-    return products;
-  }
-
-  /**
-   * Extract product information from a DOM element
-   * @param $ Cheerio instance
-   * @param element DOM element potentially containing product info
-   * @returns Product info or null if not a valid product
-   */
-  private extractProductFromElement($: cheerio.CheerioAPI, element: cheerio.Element): ProductInfo | null {
-    const $element = $(element);
-    
-    // Extract product name - try various common selectors
-    let name = '';
-    const nameSelectors = [
-      '.product-name', '.product-title', 
-      '.item-title', '.product-item-name',
-      'h2.title', 'h3.title', 'h4.title',
-      '[itemprop="name"]', 
-      'h2 a', 'h3 a', 'h4 a'
-    ];
-    
-    for (const selector of nameSelectors) {
-      const nameText = $element.find(selector).first().text().trim();
-      if (nameText) {
-        name = nameText;
-        break;
-      }
-    }
-    
-    // If no name found, try the direct heading
-    if (!name) {
-      name = $element.find('h2, h3, h4, h5').first().text().trim();
-    }
-    
-    // Try to extract price
-    let price = '';
-    const priceSelectors = [
-      '.price', '.product-price', '.item-price',
-      '.special-price', '[itemprop="price"]',
-      '.current-price', '.sale-price'
-    ];
-    
-    for (const selector of priceSelectors) {
-      const priceElement = $element.find(selector).first();
-      if (priceElement.length) {
-        price = priceElement.text().trim();
-        break;
-      }
-    }
-    
-    // If no price found through selectors, try to find price patterns in text
-    if (!price) {
-      const text = $element.text();
-      const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-      if (priceMatch) {
-        price = priceMatch[0];
-      }
-    }
-    
-    // Try to extract description
-    let description = '';
-    const descSelectors = [
-      '.description', '.product-description',
-      '.short-description', '[itemprop="description"]',
-      '.product-short-description', '.item-description'
-    ];
-    
-    for (const selector of descSelectors) {
-      const descText = $element.find(selector).first().text().trim();
-      if (descText) {
-        description = descText;
-        break;
-      }
-    }
-    
-    // Try to extract category
-    let category = '';
-    const categorySelectors = [
-      '.category', '[itemprop="category"]',
-      '.product-category', '.item-category'
-    ];
-    
-    for (const selector of categorySelectors) {
-      const categoryText = $element.find(selector).first().text().trim();
-      if (categoryText) {
-        category = categoryText;
-        break;
-      }
-    }
-    
-    // If we have at least a name, return the product
-    if (name) {
-      return {
-        name,
-        price,
-        description,
-        category
-      };
-    }
-    
-    return null;
-  }
-
-  /**
-   * Detect products by analyzing repeating DOM structures
-   * @param $ Cheerio instance
-   * @returns Array of products
-   */
-  private detectProductsViaRepeatingStructures($: cheerio.CheerioAPI): ProductInfo[] {
-    const products: ProductInfo[] = [];
-    
-    // Look for containers with multiple children that could be product listings
-    const potentialContainers = [
-      '.products', '.product-list', '.product-grid',
-      '.items', '.item-list', '.collection', 
-      '.catalog', '.category-products'
-    ];
-    
-    for (const containerSelector of potentialContainers) {
-      const $container = $(containerSelector).first();
+      // Look for microdata
+      const productElements = document.querySelectorAll('[itemtype="http://schema.org/Product"]');
       
-      // Skip if no container found
-      if (!$container.length) continue;
-      
-      // Get direct children that could be product items
-      const $children = $container.children();
-      
-      // Skip if too few children (not likely to be a product grid)
-      if ($children.length < 2) continue;
-      
-      // Analyze first few children to detect if they might be product items
-      let validProductCount = 0;
-      
-      // Check up to 5 items or all items, whichever is fewer
-      const maxCheck = Math.min(5, $children.length);
-      
-      for (let i = 0; i < maxCheck; i++) {
-        const $child = $($children[i]);
+      productElements.forEach(element => {
+        const name = this.getItemProp(element, 'name');
+        const description = this.getItemProp(element, 'description');
+        const imageUrl = this.getItemProp(element, 'image');
+        const url = this.getItemProp(element, 'url');
         
-        // Count elements with image and text elements
-        const hasImage = $child.find('img').length > 0;
-        const hasHeading = $child.find('h1, h2, h3, h4, h5, h6, strong, b').length > 0;
-        const hasPricePattern = !!$child.text().match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
+        // Get price from nested offer
+        const offerElement = element.querySelector('[itemtype="http://schema.org/Offer"]');
+        let price = '';
+        let currency = '';
         
-        // If has image and either heading or price, count as potential product
-        if (hasImage && (hasHeading || hasPricePattern)) {
-          validProductCount++;
-        }
-      }
-      
-      // If majority of checked items appear to be products, process all children
-      if (validProductCount >= Math.ceil(maxCheck * 0.6)) {
-        $children.each((_, child) => {
-          const product = this.extractProductFromRepeatingElement($, child);
-          if (product && product.name) {
-            products.push(product);
-          }
-        });
-        
-        // If we found products, exit loop
-        if (products.length > 0) {
-          break;
-        }
-      }
-    }
-    
-    return products;
-  }
-
-  /**
-   * Extract product from an element in a repeating structure
-   * @param $ Cheerio instance
-   * @param element DOM element
-   * @returns Product info or null if not a valid product
-   */
-  private extractProductFromRepeatingElement($: cheerio.CheerioAPI, element: cheerio.Element): ProductInfo | null {
-    const $element = $(element);
-    
-    // Check if this element has the basic structure we expect for a product
-    const hasImage = $element.find('img').length > 0;
-    
-    // Skip if no image (a product listing almost always has an image)
-    if (!hasImage) return null;
-    
-    // Try to find a name (headings, strong elements, etc.)
-    let name = '';
-    const $headings = $element.find('h1, h2, h3, h4, h5, h6, strong, b');
-    
-    if ($headings.length > 0) {
-      name = $($headings[0]).text().trim();
-    } else {
-      // No explicit heading, use image alt as fallback
-      const $img = $element.find('img').first();
-      name = $img.attr('alt') || '';
-    }
-    
-    // Try to find a price (look for price pattern in text)
-    const text = $element.text();
-    const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-    const price = priceMatch ? priceMatch[0] : '';
-    
-    // Use text content excluding the name and price as the description
-    let description = text
-      .replace(name, '')
-      .replace(price, '')
-      .trim()
-      .replace(/\s+/g, ' '); // Normalize whitespace
-    
-    // Limit description length
-    if (description.length > 150) {
-      description = description.substring(0, 147) + '...';
-    }
-    
-    // If we have a name, return the product
-    if (name) {
-      return {
-        name,
-        price,
-        description,
-        category: ''
-      };
-    }
-    
-    return null;
-  }
-
-  /**
-   * Detect products by finding image + text pairs
-   * @param $ Cheerio instance
-   * @returns Array of products
-   */
-  private detectProductsViaImageTextPairs($: cheerio.CheerioAPI): ProductInfo[] {
-    const products: ProductInfo[] = [];
-    
-    // Look for elements containing both images and text content
-    // that could potentially be products
-    $('div, li, article, section').each((_, element) => {
-      const $element = $(element);
-      
-      // Skip elements that are too large (likely containers, not product items)
-      if ($element.find('*').length > 100) return;
-      
-      // Check if element contains an image
-      const $image = $element.find('img');
-      if (!$image.length) return;
-      
-      // Check if element contains text with potential product name patterns
-      const text = $element.text().trim();
-      
-      // Skip if too short or too long text
-      if (text.length < 5 || text.length > 500) return;
-      
-      // Check for price pattern
-      const hasPricePattern = !!text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-      
-      // Check for common product words or patterns
-      const hasProductIndicators = /buy|shop|add.?to.?cart|product|item|price/i.test(text);
-      
-      // If has price pattern or product indicators, treat as potential product
-      if (hasPricePattern || hasProductIndicators) {
-        // Extract product information
-        let name = '';
-        
-        // Try to find a heading
-        const $heading = $element.find('h1, h2, h3, h4, h5, h6, strong, b');
-        if ($heading.length) {
-          name = $heading.first().text().trim();
-        } else {
-          // Use image alt as fallback
-          name = $image.attr('alt') || '';
-          
-          // Or try to extract a potential name using patterns
-          if (!name) {
-            // Look for capitalized words that could be a title
-            const nameMatch = text.match(/([A-Z][a-z]+(\s+[A-Za-z0-9]+){1,5})/);
-            if (nameMatch) {
-              name = nameMatch[0].trim();
-            }
-          }
-        }
-        
-        // Extract price
-        const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-        const price = priceMatch ? priceMatch[0] : '';
-        
-        // Construct description from remaining text
-        let description = text;
-        if (name) description = description.replace(name, '');
-        if (price) description = description.replace(price, '');
-        description = description.trim().replace(/\s+/g, ' ');
-        
-        // Limit description length
-        if (description.length > 150) {
-          description = description.substring(0, 147) + '...';
+        if (offerElement) {
+          price = this.getItemProp(offerElement, 'price');
+          currency = this.getItemProp(offerElement, 'priceCurrency');
         }
         
         if (name) {
           products.push({
             name,
-            price,
             description,
-            category: ''
+            price,
+            currency,
+            imageUrl,
+            url: url || baseUrl,
+            confidence: 0.85 // High confidence for microdata
           });
         }
-      }
-    });
+      });
+    } catch (error) {
+      logger.error('Error detecting Schema.org products:', error);
+    }
     
     return products;
   }
 
   /**
-   * Calculate a quality factor based on product information completeness
-   * @param products Array of detected products
-   * @returns Quality factor (0.0-1.5)
+   * Helper method to get itemprop values from microdata
    */
-  private calculateProductQualityFactor(products: ProductInfo[]): number {
-    if (products.length === 0) return 0;
+  private getItemProp(element: Element, propName: string): string {
+    const propElement = element.querySelector(`[itemprop="${propName}"]`);
     
-    const totalScore = products.reduce((score, product) => {
-      let productScore = 0;
-      
-      // Score based on field completeness
-      if (product.name) productScore += 0.4;
-      if (product.price) productScore += 0.3;
-      if (product.description) productScore += 0.2;
-      if (product.category) productScore += 0.1;
-      
-      // Bonus for high quality names (not too short, not too long)
-      if (product.name && product.name.length > 3 && product.name.length < 100) {
-        productScore += 0.1;
-      }
-      
-      // Bonus for price in expected format
-      if (product.price && /^(\D?\d+([.,]\d{2})?)$/.test(product.price)) {
-        productScore += 0.1;
-      }
-      
-      return score + productScore;
-    }, 0);
+    if (!propElement) return '';
     
-    // Calculate average score and apply scaling
-    // More products with good data = higher confidence
-    const averageScore = totalScore / products.length;
+    // Check for content attribute first (meta tags use this)
+    const contentAttr = propElement.getAttribute('content');
+    if (contentAttr) return contentAttr;
     
-    // Adjust based on number of products found
-    // Too few or too many products might indicate issues
-    let countFactor = 1.0;
-    if (products.length < 3) {
-      countFactor = 0.8; // Lower confidence for very few products
-    } else if (products.length > 30) {
-      countFactor = 0.9; // Slightly lower confidence for too many products
-    } else if (products.length >= 5 && products.length <= 20) {
-      countFactor = 1.2; // Bonus for ideal range of products
+    // For images, check src
+    if (propElement.tagName === 'IMG') {
+      return propElement.getAttribute('src') || '';
     }
     
-    return averageScore * countFactor;
+    // For links, check href
+    if (propElement.tagName === 'A') {
+      return propElement.getAttribute('href') || '';
+    }
+    
+    // Default to text content
+    return propElement.textContent?.trim() || '';
+  }
+
+  /**
+   * Detect products using common HTML patterns
+   */
+  private detectCommonProductPatterns(document: Document, baseUrl: string): DetectedProduct[] {
+    const products: DetectedProduct[] = [];
+    
+    try {
+      // Common product container class names
+      const productSelectors = [
+        '.product', 
+        '.product-item', 
+        '.product-card', 
+        '.item-product',
+        '[data-product-id]', 
+        '.woocommerce-product-gallery',
+        '.productContainer'
+      ];
+      
+      // Try selectors one by one
+      for (const selector of productSelectors) {
+        const elements = document.querySelectorAll(selector);
+        
+        if (elements.length > 0) {
+          elements.forEach(element => {
+            // Common selectors for product details
+            const name = this.getTextFromSelector(element, [
+              '.product-title', 
+              '.product-name', 
+              'h1.name', 
+              'h1.title'
+            ]);
+            
+            const description = this.getTextFromSelector(element, [
+              '.product-description', 
+              '.description',
+              '.product-short-description',
+              '#product-description'
+            ]);
+            
+            const price = this.getTextFromSelector(element, [
+              '.price', 
+              '.product-price', 
+              '.amount',
+              '.current-price'
+            ]);
+            
+            const imageUrl = this.getAttributeFromSelector(element, 'src', [
+              '.product-image img', 
+              '.product-img img',
+              '.woocommerce-product-gallery__image img'
+            ]);
+            
+            if (name) {
+              products.push({
+                name,
+                description,
+                price,
+                imageUrl,
+                url: baseUrl,
+                confidence: 0.7 // Medium confidence for pattern matching
+              });
+            }
+          });
+          
+          // If we found products, break out of the loop
+          if (products.length > 0) {
+            break;
+          }
+        }
+      }
+      
+      // If no product containers found, check if the page itself is a product
+      if (products.length === 0) {
+        // Product page patterns
+        const productPageSelectors = [
+          '#product-page', 
+          '.product-page', 
+          '.product-details',
+          '.product-info'
+        ];
+        
+        for (const selector of productPageSelectors) {
+          const element = document.querySelector(selector);
+          
+          if (element) {
+            const name = this.getTextFromSelector(document, [
+              'h1.product-title', 
+              'h1.product-name', 
+              '.product-title',
+              'h1:first-of-type'
+            ]);
+            
+            const description = this.getTextFromSelector(document, [
+              '.product-description', 
+              '#product-description',
+              '.description'
+            ]);
+            
+            const price = this.getTextFromSelector(document, [
+              '.product-price', 
+              '.price',
+              '.amount',
+              '.current-price'
+            ]);
+            
+            const imageUrl = this.getAttributeFromSelector(document, 'src', [
+              '.product-image img', 
+              '.product-img img',
+              '.woocommerce-product-gallery__image img',
+              '.main-product-image img'
+            ]);
+            
+            if (name) {
+              products.push({
+                name,
+                description,
+                price,
+                imageUrl,
+                url: baseUrl,
+                confidence: 0.65 // Medium confidence for product page
+              });
+            }
+            
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('Error detecting products from common patterns:', error);
+    }
+    
+    return products;
+  }
+
+  /**
+   * Helper to get text content from multiple possible selectors
+   */
+  private getTextFromSelector(parent: Element | Document, selectors: string[]): string {
+    for (const selector of selectors) {
+      try {
+        const element = parent.querySelector(selector);
+        if (element && element.textContent) {
+          return element.textContent.trim();
+        }
+      } catch (e) {
+        // Continue to next selector
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Helper to get attribute from multiple possible selectors
+   */
+  private getAttributeFromSelector(parent: Element | Document, attr: string, selectors: string[]): string {
+    for (const selector of selectors) {
+      try {
+        const element = parent.querySelector(selector);
+        if (element) {
+          return element.getAttribute(attr) || '';
+        }
+      } catch (e) {
+        // Continue to next selector
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Detect products using OpenGraph meta tags
+   */
+  private detectOpenGraphProducts(document: Document, baseUrl: string): DetectedProduct[] {
+    try {
+      // Check if OpenGraph indicates this is a product
+      const ogType = document.querySelector('meta[property="og:type"]')?.getAttribute('content');
+      
+      // If explicitly a product or other indicators
+      if (ogType === 'product' || ogType === 'og:product') {
+        const name = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
+        const description = document.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
+        const imageUrl = document.querySelector('meta[property="og:image"]')?.getAttribute('content') || '';
+        const url = document.querySelector('meta[property="og:url"]')?.getAttribute('content') || baseUrl;
+        
+        // Look for price in meta tags (non-standard but common)
+        const price = document.querySelector('meta[property="product:price:amount"], meta[property="og:price:amount"]')?.getAttribute('content') || '';
+        const currency = document.querySelector('meta[property="product:price:currency"], meta[property="og:price:currency"]')?.getAttribute('content') || '';
+        
+        if (name) {
+          return [{
+            name,
+            description,
+            price,
+            currency,
+            imageUrl,
+            url,
+            confidence: 0.6 // Medium-low confidence for OpenGraph
+          }];
+        }
+      }
+    } catch (error) {
+      logger.error('Error detecting OpenGraph products:', error);
+    }
+    
+    return [];
+  }
+
+  /**
+   * Clean and normalize product data
+   */
+  private normalizeProducts(products: DetectedProduct[], baseUrl: string): DetectedProduct[] {
+    return products.map(product => {
+      // Resolve relative URLs
+      if (product.imageUrl && !product.imageUrl.startsWith('http')) {
+        product.imageUrl = new URL(product.imageUrl, baseUrl).toString();
+      }
+      
+      if (product.url && !product.url.startsWith('http')) {
+        product.url = new URL(product.url, baseUrl).toString();
+      }
+      
+      // Clean up price format
+      if (product.price) {
+        // Remove currency symbols and extra spaces
+        product.price = product.price.replace(/[^\d.,]/g, '').trim();
+      }
+      
+      return product;
+    });
   }
 }
+
+export default new DomProductDetector();

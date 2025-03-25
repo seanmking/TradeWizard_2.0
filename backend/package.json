@@ -19,6 +19,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@nestjs/common": "^11.0.12",
     "@supabase/supabase-js": "^2.44.0",
     "axios": "^1.6.8",
     "cheerio": "^1.0.0",

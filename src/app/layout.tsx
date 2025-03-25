@@ -1,4 +1,4 @@
-import './globals.css';
+import '../app/globals.css';
 import { Inter } from 'next/font/google';
 
 const inter = Inter({ 
@@ -19,7 +19,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.variable}>
-      <body className="min-h-screen bg-neutral-50 text-neutral-900 font-sans">
+      <body className="font-sans">
         {children}
       </body>
     </html>

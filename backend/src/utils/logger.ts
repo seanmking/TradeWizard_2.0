@@ -1,82 +1,64 @@
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import winston from 'winston';
 
-interface LogEntry {
-  timestamp: string;
-  level: LogLevel;
-  service: string;
-  message: string;
-  data?: any;
-}
+// Define custom log levels
+const levels = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  http: 3,
+  debug: 4,
+};
 
-export class Logger {
-  private service: string;
-  private minLevel: LogLevel;
+// Define log level based on environment
+const level = process.env.NODE_ENV === 'production' ? 'http' : 'debug';
 
-  constructor(service: string, minLevel: LogLevel = 'info') {
-    this.service = service;
-    this.minLevel = minLevel;
-  }
+// Define custom colors for each log level
+const colors = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'green',
+  http: 'magenta',
+  debug: 'white',
+};
 
-  debug(message: string, data?: any): void {
-    this.log('debug', message, data);
-  }
+// Add colors to winston
+winston.addColors(colors);
 
-  info(message: string, data?: any): void {
-    this.log('info', message, data);
-  }
+// Define formatting for logs
+const format = winston.format.combine(
+  // Add timestamp
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }),
+  
+  // Add colors
+  winston.format.colorize({ all: true }),
+  
+  // Define the format of the log message
+  winston.format.printf(
+    (info) => `${info.timestamp} ${info.level}: ${info.message}`,
+  ),
+);
 
-  warn(message: string, data?: any): void {
-    this.log('warn', message, data);
-  }
+// Define which transports to use (console for development, file for production)
+const transports = [
+  // Console logger
+  new winston.transports.Console(),
+  
+  // Error log file
+  new winston.transports.File({
+    filename: 'logs/error.log',
+    level: 'error',
+  }),
+  
+  // All logs file
+  new winston.transports.File({ filename: 'logs/all.log' }),
+];
 
-  error(message: string, error?: any): void {
-    this.log('error', message, error);
-  }
+// Create the logger
+const logger = winston.createLogger({
+  level,
+  levels,
+  format,
+  transports,
+});
 
-  private log(level: LogLevel, message: string, data?: any): void {
-    if (!this.shouldLog(level)) {
-      return;
-    }
-
-    const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
-      level,
-      service: this.service,
-      message,
-      ...(data && { data })
-    };
-
-    // In production, you might want to send this to a logging service
-    if (process.env.NODE_ENV === 'production') {
-      // TODO: Implement production logging
-      console.log(JSON.stringify(entry));
-    } else {
-      const color = this.getLogColor(level);
-      console.log(
-        `${color}[${entry.timestamp}] ${entry.level.toUpperCase()} [${entry.service}] ${entry.message}${
-          data ? '\n' + JSON.stringify(data, null, 2) : ''
-        }\x1b[0m`
-      );
-    }
-  }
-
-  private shouldLog(level: LogLevel): boolean {
-    const levels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
-    return levels.indexOf(level) >= levels.indexOf(this.minLevel);
-  }
-
-  private getLogColor(level: LogLevel): string {
-    switch (level) {
-      case 'debug':
-        return '\x1b[90m'; // Gray
-      case 'info':
-        return '\x1b[32m'; // Green
-      case 'warn':
-        return '\x1b[33m'; // Yellow
-      case 'error':
-        return '\x1b[31m'; // Red
-      default:
-        return '';
-    }
-  }
-} 
+export default logger;

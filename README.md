@@ -1,54 +1,66 @@
 # TradeWizard 2.0
 
-## Project Overview
-TradeWizard is an AI-powered platform designed to help South African SMEs navigate international trade complexities, providing export readiness assessments, market intelligence, and compliance guidance.
+## Overview
 
-## Recent Updates
-### Codebase Cleanup (Phase 3 & 4)
-- Removed mock data files and hardcoded test responses
-- Enhanced `.gitignore` to prevent tracking of temporary and mock files
-- Updated documentation to reflect project structure and development guidelines
+TradeWizard is an AI-powered platform designed to help South African SMEs successfully navigate international exports. This platform addresses core challenges faced by SMEs:
 
-## Project Structure
-```
-TradeWizard_2.0/
-├── src/
-│   ├── trade-data-providers/
-│   │   ├── wits-dynamic-provider.ts
-│   │   ├── un-comtrade-dynamic-provider.ts
-│   │   └── trade-data-providers-config.ts
-│   └── ...
-├── tests/
-│   └── trade-data-test.ts
-└── docs/
-```
+- Complex export compliance and certification requirements
+- Lack of market intelligence and export opportunities
+- Overwhelming logistics and operational challenges
 
-## Development Setup
+## Architecture
 
-### Prerequisites
-- Node.js (v16+)
-- npm or yarn
-- API Keys for:
-  - WITS API
-  - UN Comtrade API
+TradeWizard uses a hybrid architecture with three main components:
 
-### Environment Configuration
-1. Copy `.env.example` to `.env`
-2. Fill in API keys and configuration
+1. **AI Agent Layer**: Handles user interactions, processes data from MCPs, generates insights, and manages export readiness scoring
+2. **MCP Layer (Model Context Protocol)**:
+   - **Compliance MCP**: Handles regulatory requirements and certification data
+   - **Market Intelligence MCP**: Manages trade flow data and market opportunities
+   - **Export Logistics MCP**: Manages logistics, shipping information, and supply chain solutions
+3. **Database Layer**: Manages user profiles, progress tracking, and assessment data
 
-### Installation
-```bash
-npm install
-npm run setup
-```
+## Implementation Plan
 
-## Testing
-```bash
-npm test
-```
+The implementation is divided into phases:
 
-## Contributing
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+### Phase 1: Website Intelligence & Product Identification (Current Phase)
+- Web scraping capabilities
+- DOM-based product detector
+- Extract product details from websites
+- Create structured output format
 
-## License
-[Your License Here]
+### Phase 2: LLM Product Analysis
+- LLM service for product classification
+- Develop prompts for product analysis
+- Create parsing logic for LLM responses
+- HS code identification capability
+
+### Phase 3: Hybrid Product Detection
+- Combine web scraping and LLM analysis
+- Logic for DOM vs. LLM detection
+- Confidence scoring for products
+- API endpoints for product detection
+
+### Future Phases
+- Integration with Compliance MCP
+- Integration with Market Intelligence MCP
+- User Interface for Product Management
+- Optimization and Testing
+
+## Current Status (Phase 1)
+
+- ✅ Basic Express server setup with routing structure
+- ✅ Database models defined (BusinessProfile, ProductCatalog, ExtractionResult)
+- ✅ API routes for different extraction types established
+- ✅ Verification components implemented (EditableField, SourceAttribution, etc.)
+- ⚠️ Web scraping functionality partially implemented
+- ⚠️ IntelligenceService integration in progress
+- ⚠️ Some linter errors and type issues to be resolved
+
+## Technology Stack
+
+- **Frontend**: Next.js 14, React, shadcn/ui components, TailwindCSS
+- **Backend**: Express.js (Node.js)
+- **Database**: Supabase (PostgreSQL)
+- **AI Agent**: Node.js with OpenAI SDK
+- **Web Scraping**: Puppeteer/Playwright, Readability.js

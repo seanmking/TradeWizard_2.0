@@ -1,440 +1,299 @@
-/**
- * Web Scraper Service
- * 
- * Responsible for fetching and parsing website content to extract relevant data
- * including product information, company details, and metadata.
- */
+import puppeteer, { Browser, Page } from 'puppeteer';
+import { Readability } from '@mozilla/readability';
+import { JSDOM } from 'jsdom';
+import logger from '../utils/logger';
 
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-import { WebsiteData, ProductInfo } from '../types';
+export interface ScrapedContent {
+  title: string;
+  excerpt: string;
+  content: string;
+  html: string;
+  url: string;
+  metadata: Record<string, string>;
+}
 
-export class WebScraperService {
+export interface ProductInfo {
+  name: string;
+  description: string;
+  images: string[];
+  price?: string;
+  currency?: string;
+  category?: string;
+  specifications?: Record<string, string>;
+  confidence: number;
+}
+
+export interface BusinessInfo {
+  name: string;
+  logo?: string;
+  description?: string;
+  location?: string;
+  contactInfo?: {
+    email?: string;
+    phone?: string;
+    address?: string;
+  };
+  socialMedia?: Record<string, string>;
+  industries?: string[];
+  confidence: number;
+}
+
+export class WebsiteExtractor {
+  private browser: Browser | null = null;
+  
   /**
-   * Scrapes a website and returns the structured content
-   * @param url URL of the website to scrape
-   * @returns Structured website data
+   * Initialize the browser instance
    */
-  public async scrapeWebsite(url: string): Promise<WebsiteData> {
+  private async initBrowser(): Promise<Browser> {
+    if (!this.browser) {
+      logger.info('Initializing browser for website extraction');
+      this.browser = await puppeteer.launch({
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      });
+    }
+    return this.browser;
+  }
+
+  /**
+   * Close browser instance
+   */
+  public async closeBrowser(): Promise<void> {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+  }
+
+  /**
+   * Extract the main content from a webpage
+   */
+  public async extractContent(url: string): Promise<ScrapedContent> {
+    const browser = await this.initBrowser();
+    const page = await browser.newPage();
+    
     try {
-      // Fetch website content
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': 'TradeWizard-Bot/1.0 (+https://tradewizard.com/bot)',
-          'Accept': 'text/html',
-        },
-        timeout: 15000, // 15 second timeout
-      });
-
-      const html = response.data;
-      const $ = cheerio.load(html);
-
-      // Extract basic metadata
-      const title = $('title').text().trim();
-      const description = $('meta[name="description"]').attr('content') || 
-                         $('meta[property="og:description"]').attr('content') || '';
+      logger.info(`Navigating to ${url}`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
       
-      // Extract all links
-      const links: string[] = [];
-      $('a').each((_, element) => {
-        const href = $(element).attr('href');
-        if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
-          links.push(href);
-        }
-      });
+      // Extract metadata
+      const metadata = await this.extractMetadata(page);
+      
+      // Get page content
+      const html = await page.content();
+      
+      // Use Readability to extract main content
+      const dom = new JSDOM(html, { url });
+      const reader = new Readability(dom.window.document);
+      const article = reader.parse();
+      
+      if (!article) {
+        throw new Error('Failed to parse article content');
+      }
+      
+      return {
+        title: article.title,
+        excerpt: article.excerpt || '',
+        content: article.textContent,
+        html: article.content,
+        url,
+        metadata
+      };
+    } catch (error) {
+      logger.error(`Error extracting content from ${url}:`, error);
+      throw error;
+    } finally {
+      await page.close();
+    }
+  }
 
-      // Extract images
-      const images = [];
-      $('img').each((_, element) => {
-        const imgUrl = $(element).attr('src');
-        const alt = $(element).attr('alt') || '';
-        if (imgUrl && !imgUrl.match(/^data:/)) { // Skip data URLs
-          images.push({
-            url: imgUrl,
-            alt: alt
-          });
-        }
-      });
-
-      // Extract other metadata
+  /**
+   * Extract metadata from the page
+   */
+  private async extractMetadata(page: Page): Promise<Record<string, string>> {
+    return page.evaluate(() => {
       const metadata: Record<string, string> = {};
-      $('meta').each((_, element) => {
-        const name = $(element).attr('name') || $(element).attr('property');
-        const content = $(element).attr('content');
+      const metaTags = document.querySelectorAll('meta');
+      
+      metaTags.forEach(tag => {
+        const name = tag.getAttribute('name') || tag.getAttribute('property');
+        const content = tag.getAttribute('content');
+        
         if (name && content) {
           metadata[name] = content;
         }
       });
-
-      // Extract the page content
-      const content = $('body').text().replace(/\\s+/g, ' ').trim();
-
-      // Construct the result
-      const result: WebsiteData = {
-        url,
-        title,
-        description,
-        content,
-        links,
-        images,
-        metadata
-      };
-
-      return result;
-    } catch (error: any) {
-      console.error(`Error scraping website ${url}:`, error.message);
-      throw new Error(`Failed to scrape website: ${error.message}`);
-    }
+      
+      return metadata;
+    });
   }
 
   /**
-   * Specialized method for scraping products from a website
-   * @param url URL of the website to scrape for products
-   * @returns Array of detected products
+   * Extract product information from a webpage
    */
-  public async scrapeProducts(url: string): Promise<ProductInfo[]> {
+  public async extractProducts(url: string): Promise<ProductInfo[]> {
+    const browser = await this.initBrowser();
+    const page = await browser.newPage();
+    
     try {
-      const websiteData = await this.scrapeWebsite(url);
-      return this.extractProductsFromWebsiteData(websiteData);
-    } catch (error: any) {
-      console.error(`Error scraping products from ${url}:`, error.message);
-      throw new Error(`Failed to scrape products: ${error.message}`);
-    }
-  }
-
-  /**
-   * Extracts products from website HTML
-   * @param html Raw HTML content
-   * @returns Array of detected products
-   */
-  public extractProductsFromHTML(html: string): ProductInfo[] {
-    const $ = cheerio.load(html);
-    const products: ProductInfo[] = [];
-
-    // Common product container patterns and selectors
-    const productSelectors = [
-      // Ecommerce platforms and standard patterns
-      '.product', 
-      '.product-item', 
-      '.item.product', 
-      '.product-container',
-      '[itemtype="http://schema.org/Product"]',
-      '.product-card',
-      '.product-box',
-      '.product-grid-item',
-      '.woocommerce-product',
-      // Generic patterns
-      '[class*="product"]',
-      '.item'
-    ];
-
-    // Try to find product containers using common selectors
-    for (const selector of productSelectors) {
-      $(selector).each((_, element) => {
-        const product = this.extractProductFromElement($, element);
-        if (product && product.name) {
-          products.push(product);
-        }
-      });
+      logger.info(`Extracting products from ${url}`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
       
-      // If we've found products with this selector, stop searching
-      if (products.length > 0) {
-        break;
-      }
-    }
-
-    // If no products found with common selectors, try to find via product schema
-    if (products.length === 0) {
-      $('[itemtype*="Product"], [typeof*="Product"]').each((_, element) => {
-        const product = this.extractProductFromElement($, element);
-        if (product && product.name) {
-          products.push(product);
-        }
-      });
-    }
-
-    // If still no products, try to find products using image-text pairs
-    if (products.length === 0) {
-      const potentialProducts = this.extractProductsFromImageTextPairs($);
-      products.push(...potentialProducts);
-    }
-
-    return this.removeDuplicateProducts(products);
-  }
-
-  /**
-   * Extract products from the website data object
-   * @param websiteData WebsiteData object
-   * @returns Array of detected products
-   */
-  private extractProductsFromWebsiteData(websiteData: WebsiteData): ProductInfo[] {
-    // Simulate HTML content from the fetched data (for demo purposes)
-    const $ = cheerio.load(`
-      <html>
-        <head>
-          <title>${websiteData.title}</title>
-          <meta name="description" content="${websiteData.description || ''}">
-        </head>
-        <body>
-          ${websiteData.content}
-        </body>
-      </html>
-    `);
-
-    const products: ProductInfo[] = [];
-
-    // Use basic text parsing for product detection
-    // This is a fallback approach when HTML structure analysis fails
-    const lines = websiteData.content.split('\n');
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      
-      // Look for patterns like product names followed by prices
-      const productNameMatch = line.match(/([A-Z][a-z]+(\s+[A-Za-z0-9]+){1,5})/);
-      const priceMatch = line.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-      
-      if (productNameMatch && priceMatch) {
-        products.push({
-          name: productNameMatch[0],
-          price: priceMatch[0],
-          description: lines[i+1]?.trim() || ''
-        });
-      }
-    }
-
-    // Try to extract products from metadata if available
-    if (websiteData.metadata && websiteData.metadata['product:title']) {
-      products.push({
-        name: websiteData.metadata['product:title'],
-        price: websiteData.metadata['product:price:amount'] || '',
-        description: websiteData.metadata['product:description'] || ''
-      });
-    }
-
-    return this.removeDuplicateProducts(products);
-  }
-
-  /**
-   * Extract a product from a DOM element
-   * @param $ Cheerio instance
-   * @param element DOM element that potentially contains product info
-   * @returns Extracted product or null if not found
-   */
-  private extractProductFromElement($: cheerio.CheerioAPI, element: cheerio.Element): ProductInfo | null {
-    const $element = $(element);
-    
-    // Try to find product name
-    let name = $element.find('.product-name, .product-title, h2, h3, h4').first().text().trim();
-    if (!name) {
-      name = $element.find('[itemprop="name"]').first().text().trim();
-    }
-    if (!name) {
-      name = $element.find('a').first().text().trim();
-    }
-
-    // Try to find product price
-    let price = '';
-    const priceElement = $element.find('.price, .product-price, [itemprop="price"]').first();
-    if (priceElement.length) {
-      price = priceElement.text().trim();
-    } else {
-      // Look for price patterns in text
-      const text = $element.text();
-      const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-      if (priceMatch) {
-        price = priceMatch[0];
-      }
-    }
-
-    // Try to find product description
-    let description = $element.find('.product-description, .description, [itemprop="description"]').first().text().trim();
-    if (!description) {
-      description = $element.find('p').first().text().trim();
-    }
-
-    // Try to find product category
-    let category = $element.find('.category, [itemprop="category"]').first().text().trim();
-    
-    if (name) {
-      return { name, price, description, category };
-    }
-    
-    return null;
-  }
-
-  /**
-   * Extract products by looking for image and text pairs
-   * @param $ Cheerio instance
-   * @returns Array of potential products
-   */
-  private extractProductsFromImageTextPairs($: cheerio.CheerioAPI): ProductInfo[] {
-    const products: ProductInfo[] = [];
-    
-    // Look for elements with both image and text (common product pattern)
-    $('div, li, article').each((_, element) => {
-      const $element = $(element);
-      
-      // Check if element contains an image
-      const hasImage = $element.find('img').length > 0;
-      
-      // Check if element contains text (name, price patterns)
-      const text = $element.text().trim();
-      const hasPricePattern = !!text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-      const hasNamePattern = !!text.match(/([A-Z][a-z]+(\s+[A-Za-z0-9]+){1,5})/);
-      
-      if (hasImage && (hasPricePattern || hasNamePattern)) {
-        const imgElement = $element.find('img').first();
-        const imgAlt = imgElement.attr('alt') || '';
-        const imgSrc = imgElement.attr('src') || '';
+      // Common product selectors to try
+      const products = await page.evaluate(() => {
+        const extractedProducts: Array<Partial<ProductInfo>> = [];
         
-        let name = '';
-        // Try to extract name from headings or strong text
-        const headingText = $element.find('h1, h2, h3, h4, h5, h6, strong').first().text().trim();
-        if (headingText) {
-          name = headingText;
-        } else if (imgAlt) {
-          // Use image alt text as fallback for name
-          name = imgAlt;
-        } else {
-          // Extract potential name using regex
-          const nameMatch = text.match(/([A-Z][a-z]+(\s+[A-Za-z0-9]+){1,5})/);
-          if (nameMatch) {
-            name = nameMatch[0];
+        // Common product containers
+        const productSelectors = [
+          '.product', 
+          '[data-product]', 
+          '.product-item', 
+          '.product-card',
+          '.item', 
+          '.product-container'
+        ];
+        
+        // Try to find product containers
+        for (const selector of productSelectors) {
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            elements.forEach(element => {
+              // Extract product details
+              const nameEl = element.querySelector('h2, h3, h4, .product-name, .product-title');
+              const descEl = element.querySelector('.description, .product-description, p');
+              const priceEl = element.querySelector('.price, .product-price');
+              const imgEl = element.querySelector('img');
+              
+              const product: Partial<ProductInfo> = {
+                name: nameEl?.textContent?.trim() || '',
+                description: descEl?.textContent?.trim() || '',
+                price: priceEl?.textContent?.trim() || '',
+                images: imgEl ? [imgEl.getAttribute('src') || ''] : [],
+              };
+              
+              // Only add if we have at least a name
+              if (product.name) {
+                extractedProducts.push(product);
+              }
+            });
+            
+            // If we found products with this selector, break
+            if (extractedProducts.length > 0) {
+              break;
+            }
           }
         }
         
-        // Extract price using regex
-        const priceMatch = text.match(/(\$|R|€|£)?(\d+([.,]\d{2})?)/);
-        const price = priceMatch ? priceMatch[0] : '';
-        
-        if (name) {
-          products.push({
-            name,
-            price,
-            description: text.replace(name, '').replace(price, '').trim()
-          });
-        }
-      }
-    });
-    
-    return products;
-  }
-
-  /**
-   * Remove duplicate products from the array
-   * @param products Array of products that may contain duplicates
-   * @returns Array with duplicates removed
-   */
-  private removeDuplicateProducts(products: ProductInfo[]): ProductInfo[] {
-    const uniqueProducts: ProductInfo[] = [];
-    const seenNames = new Set<string>();
-    
-    for (const product of products) {
-      if (product.name && !seenNames.has(product.name.toLowerCase())) {
-        seenNames.add(product.name.toLowerCase());
-        uniqueProducts.push(product);
-      }
-    }
-    
-    return uniqueProducts;
-  }
-
-  /**
-   * Extract metadata from a website
-   * @param html Website HTML content
-   * @returns Record of metadata key-value pairs
-   */
-  public extractMetadata(html: string): Record<string, string> {
-    const $ = cheerio.load(html);
-    const metadata: Record<string, string> = {};
-    
-    // Extract meta tags
-    $('meta').each((_, element) => {
-      const name = $(element).attr('name') || $(element).attr('property');
-      const content = $(element).attr('content');
-      if (name && content) {
-        metadata[name] = content;
-      }
-    });
-    
-    return metadata;
-  }
-
-  /**
-   * Analyze the complexity of a website structure
-   * @param html Website HTML content
-   * @returns Object with complexity metrics
-   */
-  public analyzeStructure(html: string): { complexity: 'simple' | 'moderate' | 'complex', metrics: Record<string, number> } {
-    const $ = cheerio.load(html);
-    
-    // Count various elements to determine complexity
-    const metrics = {
-      elementCount: $('*').length,
-      nestingDepth: this.calculateMaxNestingDepth($),
-      scriptCount: $('script').length,
-      styleCount: $('style, link[rel="stylesheet"]').length,
-      iframeCount: $('iframe').length,
-      tableCount: $('table').length
-    };
-    
-    // Determine overall complexity
-    let complexity: 'simple' | 'moderate' | 'complex' = 'simple';
-    
-    if (metrics.elementCount > 1000 || metrics.nestingDepth > 10 || metrics.scriptCount > 10) {
-      complexity = 'complex';
-    } else if (metrics.elementCount > 500 || metrics.nestingDepth > 7 || metrics.scriptCount > 5) {
-      complexity = 'moderate';
-    }
-    
-    return { complexity, metrics };
-  }
-
-  /**
-   * Calculate the maximum nesting depth of HTML elements
-   * @param $ Cheerio instance
-   * @returns Maximum nesting depth
-   */
-  private calculateMaxNestingDepth($: cheerio.CheerioAPI): number {
-    let maxDepth = 0;
-    
-    function calculateDepth(element: cheerio.Element, currentDepth: number): void {
-      maxDepth = Math.max(maxDepth, currentDepth);
-      
-      // Recursively process child elements
-      $(element).children().each((_, child) => {
-        calculateDepth(child, currentDepth + 1);
+        return extractedProducts;
       });
+      
+      // Assign confidence scores based on completeness
+      return products.map(product => {
+        const completeProduct = product as ProductInfo;
+        
+        // Calculate confidence based on available fields
+        let confidenceScore = 0.5; // Base confidence
+        
+        if (completeProduct.name) confidenceScore += 0.1;
+        if (completeProduct.description && completeProduct.description.length > 20) confidenceScore += 0.1;
+        if (completeProduct.images && completeProduct.images.length > 0) confidenceScore += 0.1;
+        if (completeProduct.price) confidenceScore += 0.1;
+        
+        return {
+          ...completeProduct,
+          confidence: parseFloat(confidenceScore.toFixed(2))
+        };
+      });
+    } catch (error) {
+      logger.error(`Error extracting products from ${url}:`, error);
+      throw error;
+    } finally {
+      await page.close();
     }
-    
-    // Start from body with depth 0
-    calculateDepth($('body')[0], 0);
-    
-    return maxDepth;
   }
 
   /**
-   * Detect contact information from website content
-   * @param html Website HTML content
-   * @returns Object with contact details
+   * Extract business information from a webpage
    */
-  public detectContactInfo(html: string): { emails: string[], phones: string[], addresses: string[] } {
-    const $ = cheerio.load(html);
-    const text = $('body').text();
+  public async extractBusinessInfo(url: string): Promise<BusinessInfo> {
+    const browser = await this.initBrowser();
+    const page = await browser.newPage();
     
-    // Extract emails
-    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-    const emails = text.match(emailRegex) || [];
-    
-    // Extract phone numbers
-    const phoneRegex = /(\+\d{1,3}[ -]?)?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}/g;
-    const phones = text.match(phoneRegex) || [];
-    
-    // Extract addresses (basic pattern)
-    const addressRegex = /\d+\s+[A-Za-z\s,]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln)\b/g;
-    const addresses = text.match(addressRegex) || [];
-    
-    return { emails, phones, addresses };
+    try {
+      logger.info(`Extracting business info from ${url}`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      
+      const businessInfo = await page.evaluate(() => {
+        // Extract name from title or header
+        const nameElement = document.querySelector('h1, .company-name, .business-name, header h1, header h2');
+        const name = nameElement?.textContent?.trim() || document.title.split('|')[0].trim();
+        
+        // Extract logo
+        const logoElement = document.querySelector('header img, .logo img, .site-logo img');
+        const logo = logoElement ? logoElement.getAttribute('src') : null;
+        
+        // Extract description
+        const descriptionElement = document.querySelector('meta[name="description"]');
+        const descFromMeta = descriptionElement ? descriptionElement.getAttribute('content') : null;
+        
+        const aboutElement = document.querySelector('.about, .about-us, #about, #about-us');
+        const descFromAbout = aboutElement?.textContent?.trim();
+        
+        // Extract contact info
+        const email = document.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace('mailto:', '');
+        const phone = document.querySelector('a[href^="tel:"]')?.getAttribute('href')?.replace('tel:', '');
+        
+        // Extract social media
+        const socialMedia: Record<string, string> = {};
+        const socialLinks = document.querySelectorAll('a[href*="facebook.com"], a[href*="twitter.com"], a[href*="instagram.com"], a[href*="linkedin.com"]');
+        
+        socialLinks.forEach(link => {
+          const href = link.getAttribute('href');
+          if (href) {
+            if (href.includes('facebook.com')) socialMedia['facebook'] = href;
+            if (href.includes('twitter.com')) socialMedia['twitter'] = href;
+            if (href.includes('instagram.com')) socialMedia['instagram'] = href;
+            if (href.includes('linkedin.com')) socialMedia['linkedin'] = href;
+          }
+        });
+        
+        // Extract address
+        const addressElement = document.querySelector('.address, .contact-address, address');
+        const address = addressElement?.textContent?.trim();
+        
+        return {
+          name,
+          logo,
+          description: descFromMeta || descFromAbout || '',
+          contactInfo: {
+            email,
+            phone,
+            address
+          },
+          socialMedia: Object.keys(socialMedia).length > 0 ? socialMedia : undefined
+        };
+      });
+      
+      // Calculate confidence based on fields extracted
+      let confidenceScore = 0.5; // Base confidence
+      
+      if (businessInfo.name) confidenceScore += 0.1;
+      if (businessInfo.logo) confidenceScore += 0.1;
+      if (businessInfo.description) confidenceScore += 0.1;
+      if (businessInfo.contactInfo?.email || businessInfo.contactInfo?.phone) confidenceScore += 0.1;
+      if (businessInfo.socialMedia && Object.keys(businessInfo.socialMedia).length > 0) confidenceScore += 0.1;
+      
+      return {
+        ...businessInfo,
+        confidence: parseFloat(confidenceScore.toFixed(2))
+      };
+    } catch (error) {
+      logger.error(`Error extracting business info from ${url}:`, error);
+      throw error;
+    } finally {
+      await page.close();
+    }
   }
 }
+
+export default new WebsiteExtractor();

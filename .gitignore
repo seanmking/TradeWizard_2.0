@@ -79,3 +79,24 @@ typings/
 # Temporary backup directories
 temp_backup/
 tmp/
+
+# PID files
+*.pid
+.api*.pid
+.nextjs*.pid
+.scraper*.pid
+
+# Cache directories
+*_cache/
+wits_cache/
+comtrade_cache/
+wits_responses/
+
+# Old directories
+old_tests/
+
+# Summary files
+summary-response.txt
+
+# Duplicate directories
+TradeWizard_2.0/

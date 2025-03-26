@@ -5,6 +5,8 @@ import { ComplianceMCP } from '../mcp/compliance-mcp/compliance-mcp.service';
 import { MarketIntelligenceMCP } from '../mcp/market-intelligence-mcp/market-intelligence-mcp.service';
 import { LLMProductAnalyzerService } from '../services/llm-product-analyzer.service';
 import { ProductData } from '../types/product.types';
+import { ConversationMemory, Message, Intent } from '../types/conversation.types';
+import { ProductAnalysisResult } from '../types/product.types';
 
 export class ConversationManager {
   private openai: OpenAI;

@@ -28,6 +28,25 @@ interface WorldBankData {
   fdi?: number;
 }
 
+interface WorldBankResponse {
+  data: Array<{
+    value: number;
+    date: string;
+    indicator: {
+      id: string;
+      value: string;
+    };
+  }>;
+}
+
+interface MarketData {
+  exports: number;
+  imports: number;
+  gdp: number;
+  tariffRate: number;
+  fdi: number;
+}
+
 export class MarketIntelligenceService {
   private prisma: PrismaClient;
   private openai: OpenAI;
@@ -89,7 +108,7 @@ export class MarketIntelligenceService {
 
       // Fetch World Bank data if enabled
       if (MarketIntelligenceConfig.WORLD_BANK_API.ENABLED) {
-        tradeData = await this.fetchWorldBankData(hsCode, market);
+        tradeData = await this.fetchWorldBankData(market);
       }
 
       // Fetch regulatory data if enabled
@@ -98,7 +117,7 @@ export class MarketIntelligenceService {
       }
 
       // Use GPT-4 to analyze and combine the data
-      const marketAnalysis = await this.analyzeMarketData(hsCode, market, tradeData, regulatoryData);
+      const marketAnalysis = await this.analyzeMarketData(tradeData, hsCode, market);
       
       if (!marketAnalysis) {
         return null;
@@ -138,14 +157,14 @@ export class MarketIntelligenceService {
     }
   }
 
-  private async fetchWorldBankData(hsCode: string, market: string): Promise<WorldBankData | null> {
+  private async fetchWorldBankData(country: string): Promise<MarketData> {
     const { BASE_URL, FORMAT, PER_PAGE } = MarketIntelligenceConfig.WORLD_BANK_API;
     const { INDICATORS } = MarketIntelligenceConfig;
 
     try {
       const responses = await Promise.all(
         Object.values(INDICATORS).map(indicator =>
-          fetch(`${BASE_URL}/country/${market}/indicator/${indicator}?format=${FORMAT}&per_page=${PER_PAGE}&mrnev=1`)
+          fetch(`${BASE_URL}/country/${country}/indicator/${indicator}?format=${FORMAT}&per_page=${PER_PAGE}&mrnev=1`)
         )
       );
 
@@ -162,7 +181,7 @@ export class MarketIntelligenceService {
       };
     } catch (error) {
       console.error('Error fetching World Bank data:', error);
-      return null;
+      throw new Error('Failed to fetch World Bank data');
     }
   }
 
@@ -172,12 +191,7 @@ export class MarketIntelligenceService {
     return null;
   }
 
-  private async analyzeMarketData(
-    hsCode: string,
-    market: string,
-    tradeData: WorldBankData | null,
-    regulatoryData: any
-  ): Promise<MarketIntelligenceData | null> {
+  private async analyzeMarketData(marketData: MarketData, hsCode: string, market: string): Promise<MarketIntelligenceData | null> {
     try {
       const prompt = `
         You are an expert market analyst specializing in international trade.
@@ -186,8 +200,7 @@ export class MarketIntelligenceService {
         
         HS Code: ${hsCode}
         Market: ${market}
-        Trade Data: ${JSON.stringify(tradeData)}
-        Regulatory Data: ${JSON.stringify(regulatoryData)}
+        Trade Data: ${JSON.stringify(marketData)}
         
         Consider the following aspects:
         1. Market size and growth potential based on GDP and trade data

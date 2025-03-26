@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HSCode {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  description String
+  section     String
+  chapter     String
+  heading     String
+  subheading  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model HSCodeMapping {
+  id          String   @id @default(uuid())
+  code        String
+  name        String
+  description String
+  category    String
+  subcategory String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([code])
+  @@index([name])
+}
+
+model ComplianceRequirement {
+  id            String   @id @default(uuid())
+  hsCodePrefix  String
+  market        String
+  requirements  String[]
+  certifications String[]
+  documentation String[]
+  restrictions  String[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([hsCodePrefix, market])
+}
+
+model MarketIntelligence {
+  id            String   @id @default(uuid())
+  hsCodePrefix  String
+  market        String
+  competing_products Json
+  price_point_recommendation String
+  market_entry_difficulty String
+  potential_advantage String
+  market_size  Float
+  growth_rate  Float
+  key_competitors String[]
+  entry_barriers String[]
+  regulatory_requirements String[]
+  validUntil   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([hsCodePrefix, market])
+  @@index([validUntil])
+}
+
+model Conversation {
+  id        String   @id
+  userId    String
+  memory    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Product {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  category      String?
+  specifications Json?
+  manufacturer   String?
+  origin        String?
+  images        String[]
+  hsCode        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([name])
+  @@index([hsCode])
+} 

@@ -52,3 +52,28 @@ storybook-static/
 *.gif
 *.webp
 *.svg
+
+# Process ID files
+*.pid
+.*.pid
+
+# Cache directories
+*_cache/
+wits_responses/
+
+# Backup files
+*.bak
+*.backup
+
+# Build directories
+backend/dist/
+tradewizard-*/dist/
+
+# Old and temporary files
+old_tests/
+summary-response.txt
+start.sh.backup
+
+# Service-specific directories
+tradewizard-digital-footprint-analyzer/
+tradewizard-scraper-service/

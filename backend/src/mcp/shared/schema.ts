@@ -1,56 +1,48 @@
 import { z } from 'zod';
+import type { MCPBaseResponse, MCPResponse, MCPValidationResult } from './types';
 
-// Base MCP response metadata schema
-export const MCPMetadataSchema = z.object({
-  source: z.string(),
-  last_updated: z.string().datetime(),
-  source_quality_score: z.number().min(0).max(1).optional(),
-  data_completeness: z.enum(['complete', 'partial', 'outdated']),
-  version: z.string().optional()
-});
+export type MCPBaseResponseSchema = z.ZodObject<{
+  status: z.ZodNumber;
+  message?: z.ZodOptional<z.ZodString>;
+  metadata?: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+}>;
 
-// Base MCP response schema
-export const MCPBaseResponseSchema = z.object({
-  status: z.enum(['success', 'error']),
-  data: z.record(z.any()),
-  ui_format: z.union([z.string(), z.any()]).optional(), // JSX elements will be any
-  agent_format: z.record(z.any()).optional(),
-  confidence_score: z.number().min(0).max(1),
-  metadata: MCPMetadataSchema,
-  known_gaps: z.array(z.string()).optional(),
-  fallback_suggestions: z.array(z.string()).optional()
-});
+export type MCPResponseSchema<T extends z.ZodTypeAny> = z.ZodObject<{
+  status: z.ZodNumber;
+  message?: z.ZodOptional<z.ZodString>;
+  metadata?: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+  data: z.ZodNullable<T>;
+}>;
 
-// TypeScript types derived from schemas
-export type MCPMetadata = z.infer<typeof MCPMetadataSchema>;
-export type MCPBaseResponse = z.infer<typeof MCPBaseResponseSchema>;
-
-// Utility type for creating specific MCP response types
-export type MCPResponse<T> = Omit<MCPBaseResponse, 'data'> & {
-  data: T;
-};
-
-// Common error response type
-export interface MCPErrorResponse {
-  status: 'error';
-  error: string;
-  code: string;
-  metadata: MCPMetadata;
+export function createBaseResponseSchema(): MCPBaseResponseSchema {
+  return z.object({
+    status: z.number(),
+    message: z.string().optional(),
+    metadata: z.record(z.unknown()).optional()
+  });
 }
 
-// Output mode type
-export type MCPOutputMode = 'agent' | 'ui' | 'both';
-
-// Cache configuration interface
-export interface MCPCacheConfig {
-  ttl: number; // Time to live in seconds
-  prefetch: boolean;
-  key: string;
+export function createResponseSchema<T extends z.ZodTypeAny>(dataSchema: T): MCPResponseSchema<T> {
+  const baseSchema = createBaseResponseSchema();
+  return baseSchema.extend({
+    data: dataSchema.nullable()
+  }) as MCPResponseSchema<T>;
 }
 
-// Base MCP handler interface
-export interface MCPHandler<T = any> {
-  handle(params: any): Promise<MCPResponse<T>>;
-  getCacheConfig?(params: any): MCPCacheConfig;
-  transformOutput?(data: T, mode: MCPOutputMode): any;
+export function validateSchema<T>(schema: z.ZodType<T>, data: unknown): MCPValidationResult {
+  const result = schema.safeParse(data);
+  if (result.success) {
+    return { isValid: true };
+  }
+  return {
+    isValid: false,
+    errors: result.error.errors.map(err => ({
+      field: err.path.join('.'),
+      message: err.message
+    }))
+  };
+}
+
+export function transformData<T>(schema: z.ZodType<T>, data: unknown): T {
+  return schema.parse(data);
 } 

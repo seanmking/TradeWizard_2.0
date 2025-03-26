@@ -98,4 +98,21 @@ export class MCPTransformer {
       return acc;
     }, {});
   }
+}
+
+export function transformResponse<T>(data: unknown): T {
+  if (!data || typeof data !== 'object') {
+    throw new Error('Invalid response data');
+  }
+  return data as T;
+}
+
+export function transformError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  if (typeof error === 'string') {
+    return new Error(error);
+  }
+  return new Error('Unknown error occurred');
 } 

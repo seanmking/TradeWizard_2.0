@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import express from 'express';
 import { MarketIntelligenceHandler } from './handlers/MarketIntelligenceHandler';
 import { z } from 'zod';
 
-const router = Router();
+const router = express.Router();
 const marketIntelligenceHandler = new MarketIntelligenceHandler();
 
 // Input validation schemas
@@ -98,6 +98,66 @@ router.get('/market-size/:product/:country', async (req, res) => {
       status: 'error',
       error: error instanceof Error ? error.message : 'Invalid request',
       code: 'VALIDATION_ERROR'
+    });
+  }
+});
+
+router.get('/trade-flow', async (req, res) => {
+  try {
+    const data = await marketIntelligenceHandler.handle({
+      ...req.query,
+      type: 'trade_flow'
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+router.get('/tariff', async (req, res) => {
+  try {
+    const data = await marketIntelligenceHandler.handle({
+      ...req.query,
+      type: 'tariff'
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+router.get('/historical', async (req, res) => {
+  try {
+    const data = await marketIntelligenceHandler.handle({
+      ...req.query,
+      type: 'historical'
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+router.get('/partners', async (req, res) => {
+  try {
+    const data = await marketIntelligenceHandler.handle({
+      ...req.query,
+      type: 'partners'
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });

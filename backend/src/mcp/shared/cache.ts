@@ -1,5 +1,40 @@
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 import { MCPResponse, MCPCacheConfig } from './schema';
+
+export class RedisCache {
+  private client: Redis;
+
+  constructor(config: RedisOptions = {}) {
+    this.client = new Redis(config);
+  }
+
+  async get<T>(key: string): Promise<T | null> {
+    const data = await this.client.get(key);
+    if (!data) return null;
+    return JSON.parse(data) as T;
+  }
+
+  async set(key: string, value: unknown, ttl?: number): Promise<void> {
+    const serializedValue = JSON.stringify(value);
+    if (ttl) {
+      await this.client.setex(key, ttl, serializedValue);
+    } else {
+      await this.client.set(key, serializedValue);
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.client.del(key);
+  }
+
+  async clear(): Promise<void> {
+    await this.client.flushall();
+  }
+
+  async disconnect(): Promise<void> {
+    await this.client.quit();
+  }
+}
 
 class MCPCache {
   private redis: Redis;

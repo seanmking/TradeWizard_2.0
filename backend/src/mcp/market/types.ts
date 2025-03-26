@@ -91,9 +91,9 @@ export interface TradeFlowData {
   total_import_value: number;
   year: number;
   growth_rate: number;
+  trade_balance: number;
   top_exporters: TradingPartner[];
   top_importers: TradingPartner[];
-  trade_balance: number;
   historical_trend: HistoricalTrendData[];
 }
 

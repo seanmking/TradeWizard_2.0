@@ -7,6 +7,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum QuestionType {
+  MULTIPLE_CHOICE
+  BOOLEAN
+  TEXT
+  NUMERIC
+}
+
+enum QuestionLevel {
+  BASELINE
+  FOLLOW_UP
+  SECTOR_SPECIFIC
+}
+
 model HSCode {
   id          String   @id @default(uuid())
   code        String   @unique
@@ -80,6 +93,7 @@ model Conversation {
 
 model Product {
   id            String   @id @default(uuid())
+  userId        String   @map("user_id")
   name          String
   description   String?
   category      String?
@@ -93,4 +107,70 @@ model Product {
 
   @@index([name])
   @@index([hsCode])
+  @@index([userId])
+}
+
+model AssessmentCategory {
+  id                String               @id @default(uuid())
+  name              String
+  description       String
+  displayOrder      Int
+  marketingHeadline String?
+  marketingText     String?
+  questions         AssessmentQuestion[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+}
+
+model AssessmentQuestion {
+  id                   String             @id @default(uuid())
+  categoryId           String
+  category             AssessmentCategory @relation(fields: [categoryId], references: [id])
+  questionText         String
+  marketingPrefix      String?
+  questionType         QuestionType
+  required             Boolean            @default(true)
+  displayOrder         Int
+  level                QuestionLevel
+  sectorRelevance      String[]
+  dependsOnQuestionId  String?
+  dependsOnAnswerValue String?
+  mcpRequirements      Json?
+  responseOptions      Json?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  responses            Response[]
+}
+
+model Response {
+  id          String             @id @default(uuid())
+  userId      String
+  questionId  String
+  question    AssessmentQuestion @relation(fields: [questionId], references: [id])
+  answerValue String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model AssessmentProgress {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  currentCategoryId    String?
+  completedCategoryIds String[]
+  completedQuestionIds String[]
+  overallProgress      Float    @default(0)
+  estimatedCompletionTime Int?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model AssessmentScore {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  categoryScores  Json
+  overallScore    Float
+  confidenceLevel Float
+  lastCalculated  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 } 

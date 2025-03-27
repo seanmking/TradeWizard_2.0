@@ -130,6 +130,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 - [Development Strategy](docs/Development_Strategy.md)
 - [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)
+- [API Response Standards](docs/API_RESPONSE_STANDARDS.md)
 - [Setup Guide](docs/SETUP_GUIDE.md)
 - [Trade Data Providers](docs/trade-data-providers.md)
 

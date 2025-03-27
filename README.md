@@ -1,113 +1,138 @@
 # TradeWizard 2.0
 
-## Overview
+A comprehensive AI-driven trade analysis and export readiness assessment platform.
 
-TradeWizard is an AI-powered platform designed to help South African SMEs successfully navigate international exports. This platform addresses core challenges faced by SMEs:
+## Project Structure
 
-- Complex export compliance and certification requirements
-- Lack of market intelligence and export opportunities
-- Overwhelming logistics and operational challenges
-
-## Architecture
-
-TradeWizard uses a hybrid architecture with three main components:
-
-1. **AI Agent Layer**: Handles user interactions, processes data from MCPs, generates insights, and manages export readiness scoring
-2. **MCP Layer (Model Context Protocol)**:
-   - **Compliance MCP**: Handles regulatory requirements and certification data
-   - **Market Intelligence MCP**: Manages trade flow data and market opportunities
-   - **Export Logistics MCP**: Manages logistics, shipping information, and supply chain solutions
-3. **Database Layer**: Manages user profiles, progress tracking, and assessment data
+```
+tradewizard_2.0/
+├── backend/                 # Node.js/Express backend
+│   ├── src/
+│   │   ├── mcp/           # Market Capability Providers
+│   │   │   ├── market/    # Market intelligence MCP
+│   │   │   ├── compliance/# Compliance & regulations MCP
+│   │   │   └── shared/    # Shared MCP utilities
+│   │   ├── services/      # Core services
+│   │   ├── ai-agent/      # AI orchestration
+│   │   └── websocket/     # Real-time communication
+│   └── tests/             # Backend tests
+├── frontend/              # Next.js frontend
+│   ├── src/
+│   │   ├── components/    # React components
+│   │   ├── services/      # Frontend services
+│   │   └── types/        # TypeScript definitions
+│   └── tests/            # Frontend tests
+└── docs/                 # Documentation
+```
 
 ## Implementation Status
 
-### Phase 1: Website Intelligence & Product Identification (Current Phase) ✅
+### Phase 1: Web Scraping & Product Detection ✅
+- Implemented web scraping service with queue management
+- Added hybrid product detection (DOM + LLM)
+- Integrated business data extraction
 
-We've successfully implemented the core components for website intelligence extraction:
+### Phase 2: LLM Integration & Market Intelligence ✅
+- Implemented real-time chat interface
+- Added market intelligence data processing
+- Integrated multiple trade data sources (WITS, Comtrade)
 
-- **Web Scraping Service**: Using Puppeteer and Readability to extract structured content from websites
-- **DOM-based Product Detector**: Analyzes web page content to identify products
-- **Business Information Extractor**: Identifies business details like name, contact info, and social media
-- **Intelligence Service**: Coordinates extraction processes and stores results in database
-- **API Routes**: Endpoints for triggering extraction from different sources (website, social media, documents)
-- **Data Models**: Mongoose schemas for storing extracted products, business profiles, and extraction results
-- **Confidence Scoring**: Algorithm to assess reliability of extracted information
+### Phase 3: Export Readiness Assessment ✅
+- Implemented assessment framework
+- Added compliance cost calculator
+- Integrated regulatory requirement analysis
 
-### Future Phases
+### Phase 4: Market Capability Providers (MCPs) ✅
+- Implemented MCP architecture
+- Added market intelligence MCP
+- Added compliance MCP
+- Created shared MCP utilities
 
-#### Phase 2: LLM Product Analysis
-- LLM service for product classification
-- Develop prompts for product analysis
-- Create parsing logic for LLM responses
-- HS code identification capability
+### Phase 5: Enhanced Analysis (In Progress) 🚧
+- Implementing advanced market analysis
+- Adding competitor analysis
+- Enhancing visualization components
 
-#### Phase 3: Hybrid Product Detection
-- Combine web scraping and LLM analysis
-- Logic for DOM vs. LLM detection
-- Confidence scoring for products
-- API endpoints for product detection
+## Key Components
 
-#### Phase 4 and Beyond
-- Integration with Compliance MCP
-- Integration with Market Intelligence MCP
-- User Interface for Product Management
-- Optimization and Testing
+### Market Capability Providers (MCPs)
+The MCP layer provides modular, standardized interfaces for different market capabilities:
 
-## Technology Stack
+- **Market Intelligence MCP**
+  - Trade flow analysis
+  - Tariff data processing
+  - Historical trend analysis
+  - Top trading partners identification
 
-- **Frontend**: Next.js 14, React, shadcn/ui components, TailwindCSS
-- **Backend**: Express.js (Node.js)
-- **Database**: MongoDB (Mongoose)
-- **Web Scraping**: Puppeteer, Readability
-- **Logging**: Winston
+- **Compliance MCP**
+  - Regulatory requirement analysis
+  - Compliance cost calculation
+  - Industry-specific requirements
+
+### AI Integration
+- LLM-based product analysis
+- Context-aware conversation management
+- Hybrid analysis approaches
 
 ## Getting Started
 
-1. Install backend dependencies:
-   ```
-   cd backend
-   npm install
-   ```
+1. Clone the repository:
+```bash
+git clone https://github.com/seanmking/TradeWizard_2.0.git
+```
 
-2. Run in development mode:
-   ```
-   npm run dev
-   ```
+2. Install dependencies:
+```bash
+# Backend
+cd backend
+npm install
 
-3. Test the API:
-   ```
-   curl -X POST http://localhost:3001/api/extract/website -H "Content-Type: application/json" -d '{"url": "https://example.com"}'
-   ```
+# Frontend
+cd ../frontend
+npm install
+```
 
-## Components
+3. Set up environment variables:
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
 
-### Web Extraction Services
+4. Start development servers:
+```bash
+# Backend
+cd backend
+npm run dev
 
-The system uses multiple approaches to extract product and business information:
+# Frontend
+cd ../frontend
+npm run dev
+```
 
-1. **Web Scraper**: Uses Puppeteer for browser automation to extract raw page content
-2. **DOM Product Detector**: Analyzes page structure with strategies like:
-   - Schema.org markup detection
-   - Common product patterns
-   - OpenGraph metadata
-3. **Business Information Extractor**: Identifies company details from pages
+## Testing
 
-### Intelligence Service
+Run tests with:
+```bash
+# Backend tests
+cd backend
+npm test
 
-Acts as the coordinator, managing:
-- Extraction processes
-- Confidence scoring
-- Data storage
-- Result tracking
+# Frontend tests
+cd frontend
+npm test
+```
 
-### Data Models
+## Contributing
 
-- **Product Catalog**: Stores product information with confidence scores
-- **Business Profile**: Records business details and their sources
-- **Extraction Result**: Tracks extraction jobs and their status
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
-## Next Steps
+## Documentation
 
-- Implement LLM integration for enhanced product classification
-- Add more test cases for extraction reliability
-- Develop frontend components to display and edit extracted results
+- [Development Strategy](docs/Development_Strategy.md)
+- [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)
+- [Setup Guide](docs/SETUP_GUIDE.md)
+- [Trade Data Providers](docs/trade-data-providers.md)
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

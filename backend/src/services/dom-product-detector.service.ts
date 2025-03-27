@@ -184,6 +184,7 @@ export class DomProductDetector {
     try {
       // Common product container class names
       const productSelectors = [
+        '.member', // Added for Browns Foods structure
         '.product', 
         '.product-item', 
         '.product-card', 
@@ -201,6 +202,7 @@ export class DomProductDetector {
           elements.forEach(element => {
             // Common selectors for product details
             const name = this.getTextFromSelector(element, [
+              'h4', // Added for Browns Foods structure
               '.product-title', 
               '.product-name', 
               'h1.name', 
@@ -208,6 +210,7 @@ export class DomProductDetector {
             ]);
             
             const description = this.getTextFromSelector(element, [
+              'span', // Added for Browns Foods structure
               '.product-description', 
               '.description',
               '.product-short-description',
@@ -222,19 +225,20 @@ export class DomProductDetector {
             ]);
             
             const imageUrl = this.getAttributeFromSelector(element, 'src', [
+              'img.img-fluid', // Added for Browns Foods structure
               '.product-image img', 
               '.product-img img',
               '.woocommerce-product-gallery__image img'
             ]);
             
-            if (name) {
+            // Only add if we have a valid product name and it's not a navigation item
+            if (name && !this.isNavigationItem(name, description)) {
               products.push({
                 name,
                 description,
-                price,
                 imageUrl,
                 url: baseUrl,
-                confidence: 0.7 // Medium confidence for pattern matching
+                confidence: 0.8 // Increased confidence for pattern matching
               });
             }
           });
@@ -307,6 +311,23 @@ export class DomProductDetector {
     }
     
     return products;
+  }
+
+  /**
+   * Helper method to determine if an item is a navigation element rather than a product
+   */
+  private isNavigationItem(name: string, description: string): boolean {
+    const navigationKeywords = [
+      'home', 'about', 'contact', 'menu', 'navigation', 'partners', 'news',
+      'gallery', 'articles', 'story', 'video', 'preparations'
+    ];
+    
+    const lowerName = name.toLowerCase();
+    const lowerDesc = description?.toLowerCase() || '';
+    
+    return navigationKeywords.some(keyword => 
+      lowerName.includes(keyword) || lowerDesc.includes(keyword)
+    );
   }
 
   /**

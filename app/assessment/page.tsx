@@ -1,5 +1,5 @@
 import React from 'react';
-import InitialAssessment from '../components/assessment/InitialAssessment';
+import AssessmentContainer from '@/components/assessment/AssessmentContainer';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -9,8 +9,13 @@ export const metadata: Metadata = {
 
 export default function AssessmentPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <InitialAssessment />
-    </div>
+    <main className="min-h-screen bg-gray-50 py-8">
+      <div className="container mx-auto">
+        <h1 className="text-3xl font-bold text-center mb-8">
+          Export Readiness Assessment
+        </h1>
+        <AssessmentContainer />
+      </div>
+    </main>
   );
 } 

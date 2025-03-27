@@ -1,15 +1,13 @@
-import './globals.css';
+import * as React from 'react';
+import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import './globals.css';
 
-const inter = Inter({ 
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap'
-});
+const inter = Inter({ subsets: ['latin'] });
 
-export const metadata = {
-  title: 'TradeWizard 2.0 - Export Solutions for African SMEs',
-  description: 'AI-powered export readiness platform helping African businesses navigate global trade',
+export const metadata: Metadata = {
+  title: 'TradeWizard - AI-Powered Export Readiness Platform',
+  description: 'Helping South African SMEs assess and improve their export readiness.',
 };
 
 export default function RootLayout({
@@ -18,8 +16,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className="min-h-screen bg-neutral-50 text-neutral-900 font-sans">
+    <html lang="en">
+      <body className={inter.className}>
         {children}
       </body>
     </html>

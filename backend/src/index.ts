@@ -1,35 +1,55 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { DataSource } from 'typeorm';
 import extractorRoutes from './routes/extractor-routes';
 import logger from './utils/logger';
+import 'reflect-metadata';
 
 // Load environment variables
 dotenv.config();
 
 // Create Express server
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5002;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Database configuration
+const AppDataSource = new DataSource({
+  type: "postgres",
+  host: process.env.DB_HOST || "localhost",
+  port: parseInt(process.env.DB_PORT || "5432"),
+  username: process.env.DB_USER || "postgres",
+  password: process.env.DB_PASSWORD || "",
+  database: process.env.DB_NAME || "tradewizard",
+  synchronize: true,
+  logging: true,
+  entities: [],
+  subscribers: [],
+  migrations: [],
+});
+
 // API Routes
 app.use('/api/extract', extractorRoutes);
+
+// Health check route
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
 
 // Default route
 app.get('/', (req, res) => {
   res.send('TradeWizard 2.0 API is running');
 });
 
-// MongoDB connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/tradewizard';
-mongoose.connect(MONGODB_URI)
+// Initialize database connection and start server
+AppDataSource.initialize()
   .then(() => {
-    logger.info('Connected to MongoDB');
+    logger.info('Connected to PostgreSQL database');
     
     // Start server
     app.listen(PORT, () => {
@@ -37,7 +57,7 @@ mongoose.connect(MONGODB_URI)
     });
   })
   .catch((error) => {
-    logger.error('MongoDB connection error:', error);
+    logger.error('Database connection error:', error);
     process.exit(1);
   });
 

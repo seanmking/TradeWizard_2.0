@@ -85,23 +85,40 @@ function prepareHtmlForAnalysis(html) {
     const $ = cheerio.load(html);
     
     // Remove elements unlikely to contain product information
-    $('script, style, noscript, svg, iframe, meta').remove();
+    $('script, style, noscript, svg, iframe, meta, header, footer, nav, .navigation, .menu, .footer, .header, .nav').remove();
     
     // Find product-related sections and prioritize them
     let productSections = $('div[class*="product"], section[class*="product"], div[class*="catalog"], .products, .shop, .store');
     
+    // Look for elements with product indicators in their text content
+    $('div, section').each(function() {
+      const $el = $(this);
+      const text = $el.text().toLowerCase();
+      if (
+        (text.includes('price') || text.includes('buy') || text.includes('order')) &&
+        !text.includes('about us') &&
+        !text.includes('contact') &&
+        !text.includes('news') &&
+        !text.includes('blog') &&
+        !$el.find('nav').length
+      ) {
+        productSections = productSections.add($el);
+      }
+    });
+    
     // If no specific product sections found, use the main content
     if (productSections.length === 0) {
-      productSections = $('main, #main, .main-content, .content');
+      productSections = $('main, #main, .main-content, .content').not('nav, .navigation, .menu');
     }
     
-    // If still nothing, use the body
+    // If still nothing, use the body content except navigation and footer
     if (productSections.length === 0) {
-      productSections = $('body');
+      productSections = $('body').clone();
+      productSections.find('nav, header, footer, .navigation, .menu, .footer, .header, .nav').remove();
     }
     
     // Extract the HTML of product sections
-    const sectionHtml = productSections.html() || $('body').html();
+    const sectionHtml = productSections.html();
     
     // Return clean HTML, limited to a reasonable size
     return sectionHtml ? sectionHtml.substring(0, 15000) : '';
@@ -118,44 +135,89 @@ function prepareHtmlForAnalysis(html) {
  * @returns {string} - Formatted prompt
  */
 function buildEnhancedProductDetectionPrompt(url, html) {
-  return `You are a product extraction specialist tasked with identifying products or services offered by a business on their website.
+  return `You are a product extraction and classification specialist tasked with identifying ONLY physical products from business websites for international trade classification.
 
 URL: ${url}
 
 TASK:
-1. Carefully analyze the HTML below to identify ONLY products or services that are EXPLICITLY mentioned
-2. For each product ACTUALLY PRESENT in the HTML, extract:
-   - name: The product name EXACTLY as it appears
-   - description: A brief description ONLY if provided in the HTML
-   - price: The price (if available) EXACTLY as shown
-   - category: Product category or type ONLY if explicitly stated
-   - images: Array of image URLs if present in the HTML
-   - attributes: Any additional attributes (size, color, material, etc.) EXPLICITLY mentioned
+1. Analyze the HTML to identify ONLY physical products EXPLICITLY offered for sale
+2. For each physical product ACTUALLY PRESENT, extract:
+   - name: Product name EXACTLY as shown
+   - description: Brief description if provided
+   - price: Price EXACTLY as shown
+   - category: Main product category
+   - subcategory: More specific subcategory if available
+   - hsCode: Suggested HS code based on product characteristics
+   - images: Array of image URLs if present
+   - attributes: Additional attributes (size, color, material, etc.)
+
+PRODUCT CATEGORIES:
+- Food & Beverage (physical food/drink products only)
+- Clothing & Accessories (wearable items)
+- Beauty & Cosmetics (physical beauty products)
+- Home Goods (tangible household items)
+- Electronics (physical devices and components)
+- Health & Wellness (physical health products only)
+- Sports Equipment (physical sporting goods)
+- Other Physical Products (specify if none of the above fit)
 
 INSTRUCTIONS:
-- ONLY extract products that are clearly identified in the HTML
-- DO NOT invent products, descriptions, or details not present in the HTML
-- DO NOT make assumptions about the business or its products beyond what is explicitly stated
-- If you can't find specific information, leave that field empty
-- Assign a confidence score (high, medium, low) based on how clearly this is identified as a product
-- If no products are found, return an empty array - do not invent products
+- ONLY extract items meeting ALL criteria:
+  * Must be a physical, tangible product
+  * Must be something that can be shipped/exported
+  * Must have a distinct product name
+  * Must be part of current offerings
+  * Must be something that requires HS code classification
 
-CRITICAL: This is for a serious business analysis. Do not hallucinate or make up information not present in the HTML. Only extract what is explicitly stated.
+- DO NOT extract:
+  * Services or subscriptions
+  * Digital products or downloads
+  * Virtual goods
+  * Consulting or professional services
+  * Navigation items or headers
+  * Company information
+  * News/blog content
+  * Contact information
+  * Marketing content
+  * Generic categories
+  * Archived content
+
+- Product indicators:
+  * Physical product name
+  * Price/"Buy"/"Order" button
+  * Product description mentioning physical characteristics
+  * Located in product catalog
+  * Product images showing physical item
+  * Shipping or delivery information
+  * Physical dimensions or weight
+
+- Assign confidence scores:
+  * High (0.9-1.0): Clear physical product with details and sales context
+  * Medium (0.6-0.8): Physical product with some details
+  * Low (0.3-0.5): Unclear or missing key details about physical nature
 
 RESPONSE FORMAT:
-Return a valid JSON array containing product objects. The response MUST be valid JSON that can be parsed with JSON.parse().
+Return valid JSON array of product objects:
 [
   {
     "name": "Product Name",
-    "description": "Description of the product",
-    "price": "Price (if available)",
-    "category": "Product category",
+    "description": "Description of physical product",
+    "price": "Price if available",
+    "category": "Main Category",
+    "subcategory": "Subcategory if available",
+    "hsCode": "Suggested HS Code",
     "images": ["image_url_1", "image_url_2"],
-    "attributes": {"key1": "value1", "key2": "value2"},
-    "confidence": "high|medium|low"
-  },
-  ...
+    "attributes": {
+      "material": "Product material",
+      "dimensions": "Physical dimensions",
+      "weight": "Product weight",
+      "other_physical_attributes": "value"
+    },
+    "detectionConfidence": 0.95
+  }
 ]
+
+CRITICAL: Only extract physical, tangible products that can be exported/imported. Ignore all services, digital goods, and non-physical items.
 
 HTML CONTENT:
 ${html}`;
@@ -168,88 +230,59 @@ ${html}`;
  */
 async function callOpenAiApi(prompt) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-    
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: model,
+      model: process.env.OPENAI_MODEL || 'gpt-4-turbo-preview',
       messages: [
-        { 
-          role: 'system', 
-          content: 'You are a product identification expert that returns valid, parseable JSON. Always respond with a complete JSON array, even if empty.'
+        {
+          role: 'system',
+          content: 'You are a product detection and classification expert specializing in international trade.'
         },
-        { role: 'user', content: prompt }
+        {
+          role: 'user',
+          content: prompt
+        }
       ],
-      temperature: 0.1,
+      temperature: 0.3,
       max_tokens: 2000,
-      response_format: { type: "json_object" } // For newer models that support this
+      top_p: 0.9
     }, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json'
       }
     });
-    
-    // Extract the response content
-    const content = response.data.choices[0].message.content.trim();
-    
-    // Parse JSON from the response
-    try {
-      // Find JSON array in the response
-      let jsonContent = content;
-      
-      // If the content is wrapped in a JSON object (common with response_format: json_object)
-      if (content.startsWith('{') && content.endsWith('}')) {
-        const parsed = JSON.parse(content);
-        // Check if there's a products array or similar in the response
-        if (parsed.products && Array.isArray(parsed.products)) {
-          return parsed.products;
-        } else if (parsed.results && Array.isArray(parsed.results)) {
-          return parsed.results;
-        } else if (parsed.data && Array.isArray(parsed.data)) {
-          return parsed.data;
-        }
-        
-        // If we can't find an obvious array property, look for any array
-        for (const key in parsed) {
-          if (Array.isArray(parsed[key])) {
-            return parsed[key];
-          }
-        }
-        
-        // If still nothing, the whole response might be structured differently
-        return []; // Return empty array as fallback
-      }
-      
-      // Check if content is a JSON array
-      if (content.startsWith('[') && content.endsWith(']')) {
+
+    if (response.data.choices && response.data.choices[0]) {
+      try {
+        const content = response.data.choices[0].message.content;
         const products = JSON.parse(content);
-        if (Array.isArray(products)) {
-          logger.info(`Successfully extracted ${products.length} products using LLM`);
-          return products;
+        
+        if (!Array.isArray(products)) {
+          logger.warn('OpenAI response was not an array');
+          return [];
         }
+        
+        return products.filter(product => {
+          // Validate required fields
+          if (!product.name || !product.category) {
+            return false;
+          }
+          
+          // Normalize confidence score
+          product.detectionConfidence = normalizeConfidence(product.confidence || 'medium');
+          delete product.confidence;
+          
+          return true;
+        });
+      } catch (error) {
+        logger.error('Error parsing OpenAI response:', error);
+        return [];
       }
-      
-      // Try to find JSON array in the response
-      const jsonMatch = content.match(/\[\s*\{.+\}\s*\]/s);
-      if (jsonMatch) {
-        const products = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(products)) {
-          logger.info(`Successfully extracted ${products.length} products from matched JSON`);
-          return products;
-        }
-      }
-      
-      // If we got here, we couldn't find a valid JSON array
-      logger.warn('Could not extract valid JSON array from LLM response');
-      return [];
-    } catch (parseError) {
-      logger.error(`Failed to parse LLM response as JSON: ${parseError.message}`);
-      logger.debug(`Response content: ${content}`);
-      return [];
     }
+    
+    return [];
   } catch (error) {
-    logger.error(`Error calling OpenAI API: ${error.message}`);
+    logger.error('OpenAI API error:', error);
     return [];
   }
 }

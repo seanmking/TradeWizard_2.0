@@ -6,6 +6,7 @@
  */
 
 import { EnhancedProduct, ProductDetectionResult } from '../types/product-detection.types';
+import { OpenAI } from 'openai';
 
 /**
  * Configuration for the LLM Product Analyzer
@@ -224,18 +225,39 @@ Only respond with valid JSON. Do not include any explanations or notes outside t
     content: string;
     tokensUsed: number;
   }> {
-    // This is a mock implementation - in production this would:
-    // 1. Use the OpenAI SDK or similar to send the prompt
-    // 2. Process the response
-    // 3. Track token usage
-    
-    // For now, return a mock response
-    return {
-      content: JSON.stringify({
-        products: []
-      }),
-      tokensUsed: Math.floor(prompt.length / 4) // Rough estimation
-    };
+    try {
+      const openai = new OpenAI({
+        apiKey: this.config.apiKey || process.env.OPENAI_API_KEY
+      });
+
+      const response = await openai.chat.completions.create({
+        model: this.config.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a specialized product detection system for e-commerce websites. Your task is to analyze HTML content and identify products with their details. Only respond with valid JSON.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+        response_format: { type: 'json_object' }
+      });
+
+      const content = response.choices[0]?.message?.content || '{"products": []}';
+      const tokensUsed = response.usage?.total_tokens || 0;
+
+      return {
+        content,
+        tokensUsed
+      };
+    } catch (error) {
+      console.error('Error calling OpenAI API:', error);
+      throw error;
+    }
   }
   
   /**

@@ -3,6 +3,7 @@ import HybridProductDetectorService from '../services/hybrid-product-detector.se
 import LLMProductAnalyzerService from '../services/llm-product-analyzer.service';
 import ComplianceMCPService from '../services/compliance-mcp.service';
 import MarketIntelligenceMCPService from '../services/market-intelligence-mcp.service';
+import { ParsedQs } from 'qs';
 
 const router = express.Router();
 const hybridDetector = new HybridProductDetectorService();
@@ -34,7 +35,7 @@ router.post('/detect', async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       status: 'error', 
-      message: error.message 
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -88,7 +89,7 @@ router.post('/save', async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       status: 'error', 
-      message: error.message 
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
@@ -132,7 +133,7 @@ router.get('/user/:userId', async (req, res) => {
 
     // Apply filters
     const filteredProducts = mockProducts.filter(product => {
-      const meetsCategory = !category || product.originalDetection.name.toLowerCase().includes(category.toLowerCase());
+      const meetsCategory = !category || (typeof category === 'string' && product.originalDetection.name.toLowerCase().includes(category.toLowerCase()));
       const meetsConfidence = !minConfidence || product.originalDetection.confidence >= parseFloat(minConfidence as string);
       const meetsViability = !exportViability || product.exportReadiness.overallViability === exportViability;
 
@@ -146,7 +147,41 @@ router.get('/user/:userId', async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       status: 'error', 
-      message: error.message 
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Product Analysis Endpoint
+router.get('/analyze', async (req, res) => {
+  try {
+    const { url } = req.query;
+    
+    // Validate input
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Invalid URL provided' });
+    }
+
+    // First try hybrid detection
+    const productDetectionResult = await hybridDetector.detectProduct(url);
+    
+    // Enhance with LLM classification if products were found
+    let enhancedResult = productDetectionResult;
+    if (productDetectionResult.productDetails && productDetectionResult.productDetails.length > 0) {
+      enhancedResult = await llmAnalyzer.classifyProduct(productDetectionResult);
+    }
+    
+    res.json({
+      status: 'success',
+      productDetails: enhancedResult.productDetails || [],
+      categories: enhancedResult.categories || [],
+      confidence: enhancedResult.confidence || 0.5
+    });
+  } catch (error) {
+    console.error('Error analyzing products:', error);
+    res.status(500).json({ 
+      status: 'error', 
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });

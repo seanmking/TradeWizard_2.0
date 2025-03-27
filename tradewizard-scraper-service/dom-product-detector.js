@@ -215,8 +215,12 @@ function extractHeadingImagePairs($, url) {
     const $heading = $(heading);
     const headingText = $heading.text().trim();
     
-    // Skip very short headings or ones that are likely navigation
-    if (headingText.length < 3 || $heading.closest('nav, header, footer').length > 0) {
+    // Skip very short headings or ones that are likely navigation/UI elements
+    if (headingText.length < 3 || 
+        $heading.closest('nav, header, footer, .menu, .navigation').length > 0 ||
+        /^(home|about|contact|news|gallery|partners|our|your|how|food|family|menu|services)$/i.test(headingText) ||
+        headingText.toLowerCase().includes('welcome') ||
+        headingText.toLowerCase().includes('contact us')) {
       return;
     }
     
@@ -231,23 +235,47 @@ function extractHeadingImagePairs($, url) {
     for (const $container of nearbyContainers) {
       const $img = $container.find('img').first();
       
+      // Skip if image is too small (likely an icon) or has certain classes/attributes
       if ($img.length > 0) {
-        // If we have a heading and an image, it might be a product
-        // Also look for price patterns
+        const imgSrc = $img.attr('src') || '';
+        const imgClass = $img.attr('class') || '';
+        const imgAlt = $img.attr('alt') || '';
+        
+        // Skip icons, logos, and decorative images
+        if (imgSrc.includes('icon') || 
+            imgSrc.includes('logo') || 
+            imgClass.includes('icon') || 
+            imgClass.includes('logo') || 
+            imgAlt.toLowerCase().includes('icon') || 
+            imgAlt.toLowerCase().includes('logo')) {
+          continue;
+        }
+        
+        // Look for price patterns or "buy" buttons to confirm it's a product
         const priceText = extractPriceText($container);
+        const hasBuyButton = $container.find('a, button').filter((i, el) => {
+          const text = $(el).text().toLowerCase();
+          return text.includes('buy') || 
+                 text.includes('add to cart') || 
+                 text.includes('purchase') ||
+                 text.includes('shop now');
+        }).length > 0;
         
-        const product = {
-          name: headingText,
-          description: extractDescription($container),
-          price: priceText,
-          images: [$img.attr('src')].filter(Boolean),
-          detectionMethod: 'dom-heading-image',
-          confidence: 0.5
-        };
-        
-        // Add to products list
-        products.push(product);
-        break; // Only extract one product per heading
+        // Only consider it a product if it has a price or buy button
+        if (priceText || hasBuyButton) {
+          const product = {
+            name: headingText,
+            description: extractDescription($container),
+            price: priceText,
+            images: [$img.attr('src')].filter(Boolean),
+            detectionMethod: 'dom-heading-image',
+            confidence: hasBuyButton ? 0.8 : 0.6
+          };
+          
+          // Add to products list
+          products.push(product);
+          break; // Only extract one product per heading
+        }
       }
     }
   });

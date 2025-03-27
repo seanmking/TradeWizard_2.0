@@ -1,17 +1,23 @@
-module.exports = {
+export default {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/$1'
-  },
-  testMatch: [
-    '**/__tests__/**/*.test.ts',
-    '**/__tests__/**/*.test.tsx'
-  ],
   transform: {
-    '^.+\\.(ts|tsx)$': ['ts-jest', {
-      tsconfig: 'tsconfig.json'
-    }]
+    '^.+\\.tsx?$': ['ts-jest', {
+      useESM: true,
+    }],
   },
-  setupFilesAfterEnv: ['<rootDir>/jest.setup.js']
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^app/(.*)$': '<rootDir>/app/$1'
+  },
+  extensionsToTreatAsEsm: ['.ts'],
+  testMatch: ['**/*.test.ts'],
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  modulePathIgnorePatterns: [
+    '<rootDir>/tradewizard-digital-footprint-analyzer/',
+    '<rootDir>/backend/tradewizard-digital-footprint-analyzer/'
+  ],
+  roots: ['<rootDir>'],
+  modulePaths: ['<rootDir>']
 }; 

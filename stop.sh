@@ -22,19 +22,25 @@ kill_process_tree() {
     # Process group kill (more reliable for npm/Next.js)
     local pgid=$(ps -o pgid= -p $pid | grep -o '[0-9]\+')
     if [ ! -z "$pgid" ]; then
-      echo "Sending SIG$signal to process group $pgid"
-      kill -$signal -$pgid 2>/dev/null || true
+      # Only kill node-related processes in the process group
+      local node_pids=$(ps -o pid= -g $pgid | grep -E "$(pgrep -f 'node|npm|next|ts-node')" || true)
+      if [ ! -z "$node_pids" ]; then
+        echo "Sending SIG$signal to node processes in group $pgid"
+        echo "$node_pids" | xargs -n1 kill -$signal 2>/dev/null || true
+      fi
     fi
     
-    # Find and kill descendants in case process group kill didn't work
-    pgrep -P $pid | while read child_pid; do
+    # Find and kill only node-related descendants
+    pgrep -P $pid -f "node|npm|next|ts-node" | while read child_pid; do
       kill_process_tree $child_pid $signal
     done
   fi
   
-  # Kill the process itself
-  echo "Sending SIG$signal to $pid"
-  kill -$signal $pid 2>/dev/null || true
+  # Kill the process itself only if it's node-related
+  if ps -p $pid -o command= | grep -qE "node|npm|next|ts-node"; then
+    echo "Sending SIG$signal to $pid"
+    kill -$signal $pid 2>/dev/null || true
+  fi
 }
 
 # Wait for port to be released with timeout

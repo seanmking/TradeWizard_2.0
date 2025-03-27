@@ -1,235 +1,144 @@
-# TradeWizard Scraper Service
+# TradeWizard Website Intelligence Service
 
-Enhanced web scraper microservice for TradeWizard, providing multi-page crawling, data extraction, and storage for business intelligence.
+A comprehensive service for analyzing websites to extract business intelligence, product information, and export readiness assessments.
 
 ## Features
 
-- **Multi-page Crawling**: Intelligently crawls websites up to a specified depth, respecting `robots.txt`
-- **Page Classification**: Classifies pages as home, about, products, contact, certifications, or export
-- **Hybrid Product Detection**: Combines DOM-based and LLM-based approaches for comprehensive product identification
-- **Enhanced Business Information**: Uses LLM to extract detailed business information
-- **Export Readiness Assessment**: Analyzes export readiness with strengths, weaknesses, and recommendations
-- **Data Persistence**: Stores scraped data in Supabase for efficient retrieval and caching
-- **Data Completeness Analysis**: Identifies gaps in data and provides recommendations for improvement
+- **Comprehensive Website Scraping**
+  - Configurable page limits (up to 100 pages)
+  - Full content extraction
+  - Asset detection (PDFs, images, documents)
+  - Social media integration
+
+- **Intelligent Analysis**
+  - Product detection and classification
+  - Business profile extraction
+  - Export readiness assessment
+  - Market insights generation
+
+- **Local-First Architecture**
+  - SQLite database for raw data storage
+  - Offline-capable analysis
+  - User verification system
+  - Controlled sync to Supabase
 
 ## Setup
 
-### Prerequisites
-
-- Node.js (v14+)
-- npm or yarn
-- Supabase account and project (for data persistence)
-- OpenAI API key (for LLM-enhanced analysis)
-
-### Installation
-
-1. Clone the repository
-2. Install dependencies:
-   ```
-   npm install
-   ```
-3. Copy `.env.example` to `.env` and configure environment variables:
-   ```
-   cp .env.example .env
-   ```
-4. Set up your Supabase database:
-   - Create a new Supabase project
-   - Run the SQL commands in `db/schema.sql` in the Supabase SQL Editor
-
-### Configuration
-
-Edit the `.env` file with your settings:
-
-```
-# Server configuration
-PORT=3001
-
-# OpenAI API configuration
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
-
-# Scraping configuration
-MAX_PAGES=10
-MAX_DEPTH=3
-REQUEST_DELAY=1000
-
-# Supabase configuration
-SUPABASE_URL=your_supabase_url_here
-SUPABASE_ANON_KEY=your_supabase_anon_key_here
-
-# Logging
-LOG_LEVEL=info
-```
-
-## Usage
-
-### Starting the Service
-
+1. Install dependencies:
 ```bash
-# Development with auto-restart
-npm run dev
+npm install
+```
 
-# Production
+2. Create a `.env` file with required configuration:
+```env
+PORT=3000
+OPENAI_API_KEY=your_openai_api_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+```
+
+3. Build the project:
+```bash
+npm run build
+```
+
+4. Start the service:
+```bash
 npm start
 ```
 
-### API Endpoints
-
-#### Health Check
-
-```
-GET /health
+For development:
+```bash
+npm run dev
 ```
 
-Response:
-```json
+## API Endpoints
+
+### Analyze Website
+```http
+POST /analyze
+Content-Type: application/json
+
 {
-  "status": "ok",
-  "message": "Scraper service is running"
+  "url": "https://example.com",
+  "options": {
+    "maxPages": 100,
+    "includeSocial": true
+  }
 }
 ```
 
-#### Basic Scrape
-
-```
-GET /scrape?url=example.com&maxPages=10&maxDepth=3&useCache=true&forceFresh=false
-```
-
-Parameters:
-- `url`: Website URL to scrape (required)
-- `maxPages`: Maximum number of pages to crawl (optional, default: 10)
-- `maxDepth`: Maximum depth to crawl (optional, default: 3)
-- `useCache`: Whether to use cached data if available (optional, default: true)
-- `forceFresh`: Whether to force a fresh scrape (optional, default: false)
-
-#### Analyze Website
-
-```
-GET /analyze?url=example.com&maxPages=10&maxDepth=3&useCache=true&forceFresh=false
+### Check Progress
+```http
+GET /progress/:websiteId
 ```
 
-Parameters: Same as `/scrape`
+### Submit Verification
+```http
+POST /verify
+Content-Type: application/json
 
-Response Format:
-```json
 {
-  "businessName": "Example Business",
-  "businessSize": "small",
-  "description": "Description of the business",
-  "productCategories": ["Category1", "Category2"],
-  "productDetails": [
-    {
-      "name": "Product Name",
-      "description": "Product description",
-      "confidence": "high"
-    }
-  ],
-  "customerSegments": ["B2B", "B2C"],
-  "certifications": ["ISO9001", "HACCP"],
-  "geographicPresence": ["South Africa", "Kenya"],
-  "exportReadiness": 65
+  "websiteId": "base64_encoded_id",
+  "field": "products.0.name",
+  "originalValue": "Old Name",
+  "correctedValue": "New Name",
+  "confidence": 0.9
 }
 ```
 
-#### Retrieve Cached Data
-
-```
-GET /cached?url=example.com
-```
-
-Parameters:
-- `url`: Website URL to retrieve data for (required)
-
-#### Check Data Completeness
-
-```
-GET /completeness?url=example.com
-```
-
-Parameters:
-- `url`: Website URL to check completeness for (required)
-
-Response Format:
-```json
-{
-  "overall": 70,
-  "businessInfo": {
-    "score": 80,
-    "fields": {
-      "businessName": true,
-      "description": true,
-      "..." : "..."
-    },
-    "recommendations": ["Add founding year information"]
-  },
-  "productInfo": { "..." },
-  "exportInfo": { "..." },
-  "dataSource": "cache",
-  "lastUpdated": "2023-06-10T12:34:56Z",
-  "recommendations": ["Add founding year information", "..."]
-}
-```
-
-#### Database Statistics
-
-```
-GET /stats
-```
-
-Response Format:
-```json
-{
-  "websiteCount": 150,
-  "productCount": 1250,
-  "recentWebsites": [
-    {
-      "url": "example.com",
-      "business_name": "Example Business",
-      "last_scraped": "2023-06-10T12:34:56Z"
-    },
-    "..."
-  ]
-}
+### Sync to Supabase
+```http
+POST /sync/:websiteId
 ```
 
 ## Architecture
 
-The scraper service consists of the following main components:
+### Data Flow
+1. Website URL submitted for analysis
+2. Content scraped and stored locally
+3. Analysis performed in chunks
+4. Results available for user verification
+5. Verified data synced to Supabase
 
-1. **Crawler Module**: Handles the multi-page crawling with page classification
-2. **Page Extractor**: Extracts structured data from different types of pages
-3. **Enhanced LLM Analyzer**: Uses OpenAI for advanced business intelligence extraction
-4. **Hybrid Product Detector**: Combines DOM-based and LLM approaches for product detection
-5. **Supabase Service**: Handles data persistence and caching
-6. **Server**: Express.js REST API for accessing the scraper functionality
+### Components
+- **WebsiteIntelligenceService**: Main service orchestrator
+- **ContentChunker**: Smart text processing
+- **ProgressTracker**: Real-time progress monitoring
+- **LocalDatabase**: SQLite data management
+- **OpenAIService**: AI-powered analysis
 
 ## Development
 
-### Code Structure
+### Project Structure
+```
+src/
+├── index.ts              # Main entry point
+├── types/               # TypeScript interfaces
+├── services/           # Core services
+├── database/           # Database management
+└── utils/             # Utility functions
+```
 
-- `server.js`: Main entry point and API endpoints
-- `crawler.js`: Multi-page crawling implementation
-- `page-extractor.js`: Extracts data from different page types
-- `enhanced-llm-analyzer.js`: LLM-based business intelligence extraction
-- `hybrid-product-detector.js`: Product detection using hybrid approach
-- `supabase-service.js`: Data persistence and caching
-- `logger.js`: Logging utility
-- `db/schema.sql`: Database schema for Supabase
+### Adding New Features
+1. Define types in `types/index.ts`
+2. Implement service in `services/`
+3. Add routes in `index.ts`
+4. Update documentation
 
-### Running Tests
+## Testing
 
+Run tests:
 ```bash
 npm test
 ```
 
-## License
-
-[MIT](LICENSE)
-
 ## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request 
+2. Create a feature branch
+3. Submit a pull request
+
+## License
+
+MIT License 

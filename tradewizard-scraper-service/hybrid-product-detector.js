@@ -71,22 +71,27 @@ async function safeRequestWithFallback(url, options = {}) {
 async function detectProducts(url, pageData) {
   logger.info(`Starting hybrid product detection for ${url}`);
   
-  if (!pageData || !pageData.pages || !Array.isArray(pageData.pages)) {
-    logger.warn(`Invalid pageData structure: ${JSON.stringify({
-      hasData: !!pageData,
-      hasPages: pageData ? !!pageData.pages : false,
-      isArray: pageData && pageData.pages ? Array.isArray(pageData.pages) : false,
-      pageCount: pageData && pageData.pages && Array.isArray(pageData.pages) ? pageData.pages.length : 0
-    })}`);
-    return { products: [], categories: [], metrics: { productCount: 0 } };
-  }
+  // Add timeout protection
+  const TIMEOUT = 30000; // 30 seconds
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Product detection timed out')), TIMEOUT);
+  });
   
   try {
-    logger.info(`Starting hybrid product detection for ${pageData.pages.length} pages`);
+    if (!pageData || !pageData.pages || !Array.isArray(pageData.pages)) {
+      logger.warn('Invalid pageData structure:', {
+        hasData: !!pageData,
+        hasPages: pageData ? !!pageData.pages : false,
+        isArray: pageData && pageData.pages ? Array.isArray(pageData.pages) : false,
+        pageCount: pageData && pageData.pages && Array.isArray(pageData.pages) ? pageData.pages.length : 0
+      });
+      return { products: [], categories: [], metrics: { productCount: 0 } };
+    }
     
     // Extract relevant pages for product detection
-    // In some cases, page types might not be set correctly, so let's be more flexible
     const productPages = pageData.pages.filter(page => {
+      logger.debug(`Analyzing page ${page.url}`);
+      
       // Make sure page.types is an array or convert single value to array
       const types = Array.isArray(page.types) 
         ? page.types 
@@ -98,6 +103,7 @@ async function detectProducts(url, pageData) {
         /product|shop|store|buy|purchase/i.test(page.url) ||
         (page.html && /product-list|product-grid|add-to-cart|shop-item/i.test(page.html));
       
+      logger.debug(`Page ${page.url} is product page: ${isProductPage}`);
       return isProductPage;
     });
     
@@ -117,43 +123,51 @@ async function detectProducts(url, pageData) {
     const htmlContents = pagesToProcess.map(page => ({
       url: page.url,
       html: page.html
-    })).filter(item => item.html); // Make sure there is HTML content
+    })).filter(item => item.html);
     
     logger.info(`Prepared ${htmlContents.length} pages with HTML content for processing`);
     
-    if (htmlContents.length === 0) {
-      logger.warn('No HTML content available for product detection');
-      return { products: [], categories: [], metrics: { productCount: 0 } };
-    }
+    // Race against timeout
+    const detectionPromise = Promise.race([
+      timeoutPromise,
+      (async () => {
+        // Start with DOM-based detection as it's faster
+        logger.info('Starting DOM-based product detection...');
+        const domProducts = await detectDomProducts(htmlContents);
+        logger.info(`DOM-based detection found ${domProducts.length} products`);
+        
+        // Only use LLM if DOM detection found few or no products
+        let llmProducts = [];
+        if (domProducts.length < 3) {
+          logger.info('Few DOM products found, trying LLM detection...');
+          llmProducts = await detectLlmProducts(htmlContents);
+          logger.info(`LLM-based detection found ${llmProducts.length} products`);
+        }
+        
+        // Combine products
+        const uniqueProducts = mergeProducts(domProducts, llmProducts);
+        logger.info(`Combined detection found ${uniqueProducts.length} unique products`);
+        
+        // Extract categories
+        const categories = extractCategories(uniqueProducts);
+        
+        return {
+          products: uniqueProducts,
+          categories,
+          metrics: {
+            productCount: uniqueProducts.length,
+            categories: categories.length,
+            domProducts: domProducts.length,
+            llmProducts: llmProducts.length,
+            detectionMethod: llmProducts.length > 0 ? 'hybrid' : 'dom-only'
+          }
+        };
+      })()
+    ]);
     
-    // DOM-based product detection
-    const domProducts = await detectDomProducts(htmlContents);
-    logger.info(`DOM-based detection found ${domProducts.length} products`);
-    
-    // LLM-based product detection
-    const llmProducts = await detectLlmProducts(htmlContents);
-    logger.info(`LLM-based detection found ${llmProducts.length} products`);
-    
-    // Combine products from both approaches
-    const uniqueProducts = mergeProducts(domProducts, llmProducts);
-    logger.info(`Hybrid detection found ${uniqueProducts.length} unique products`);
-    
-    // Extract categories from products
-    const categories = extractCategories(uniqueProducts);
-    logger.info(`Extracted ${categories.length} product categories`);
-    
-    return {
-      products: uniqueProducts,
-      categories: categories,
-      metrics: {
-        productCount: uniqueProducts.length,
-        categories: categories.length,
-        domProducts: domProducts.length,
-        llmProducts: llmProducts.length
-      }
-    };
+    return await detectionPromise;
   } catch (error) {
-    logger.error(`Failed to detect products: ${error.message}`);
+    logger.error('Failed to detect products:', error);
     return { 
       products: [], 
       categories: [], 
@@ -187,72 +201,144 @@ function extractCategories(products) {
  * @returns {Array} - Combined unique products
  */
 function mergeProducts(domProducts, llmProducts) {
-  // Create map to track unique products by name
   const productsMap = new Map();
   
-  // Add DOM products first
-  domProducts.forEach(product => {
-    const normalizedName = (product.name || '').toLowerCase().trim();
-    if (normalizedName) {
-      productsMap.set(normalizedName, {
-        ...product,
-        confidence: getConfidenceValue(product.confidence),
-        detectionMethod: 'dom'
-      });
-    }
-  });
-  
-  // Add or update with LLM products (LLM products have higher confidence)
-  llmProducts.forEach(product => {
-    const normalizedName = (product.name || '').toLowerCase().trim();
-    if (!normalizedName) return;
+  const isValidProduct = (product) => {
+    if (!product || typeof product !== 'object') return false;
     
-    const existingProduct = productsMap.get(normalizedName);
+    // Safely handle null/undefined values
+    const name = (product.name || '').toString().trim();
     
-    if (!existingProduct || getConfidenceValue(product.confidence) > getConfidenceValue(existingProduct.confidence)) {
-      productsMap.set(normalizedName, {
-        ...product,
-        confidence: getConfidenceValue(product.confidence),
-        detectionMethod: 'llm'
-      });
-    } else if (existingProduct) {
-      // Merge information from both sources
-      productsMap.set(normalizedName, {
-        ...existingProduct,
-        description: existingProduct.description || product.description,
-        price: existingProduct.price || product.price,
-        category: existingProduct.category || product.category,
-        images: [...new Set([...(existingProduct.images || []), ...(product.images || [])])],
-        confidence: Math.max(
-          getConfidenceValue(existingProduct.confidence),
-          getConfidenceValue(product.confidence)
-        ),
-        detectionMethod: 'hybrid'
-      });
-    }
-  });
+    // Basic name validation
+    if (!name || name.length < 2) return false;
+    
+    // Skip obvious navigation/structural elements
+    if (/^(home|menu|about|contact|page|category)$/i.test(name)) return false;
+    if (/\.(html|php|aspx|jsp|xml)$/i.test(name)) return false;
+    
+    // Skip common website sections
+    const nonProductTerms = /^(navigation|footer|header|sidebar|main menu|search|login|register)$/i;
+    if (nonProductTerms.test(name)) return false;
+    
+    // Check if it's likely a physical product
+    const productIndicators = [
+      // Has a description
+      product.description && product.description.length > 0,
+      
+      // Has an image
+      Array.isArray(product.images) && product.images.length > 0,
+      
+      // Has a price
+      product.price && product.price.length > 0,
+      
+      // Name indicates physical product
+      /\b(pack|set|kit|box|bottle|jar|can|bag|piece|unit|kg|ml|g|liter)\b/i.test(name),
+      
+      // Name contains product attributes
+      /\b(size|color|weight|material|dimension|brand|model|style)\b/i.test(name),
+      
+      // Has physical attributes
+      product.attributes && (
+        product.attributes.weight ||
+        product.attributes.dimensions ||
+        product.attributes.material ||
+        product.attributes.size
+      ),
+      
+      // Has a category that suggests physical product
+      product.category && /\b(food|beverage|clothing|electronics|home|beauty|sports|equipment)\b/i.test(product.category)
+    ];
+    
+    // Consider it valid if it has at least ONE strong indicator
+    return productIndicators.filter(Boolean).length >= 1;
+  };
+
+  // First process DOM products as they're more reliable for structure
+  if (Array.isArray(domProducts)) {
+    domProducts.forEach(product => {
+      try {
+        if (!isValidProduct(product)) return;
+        
+        const normalizedName = (product.name || '').toString().toLowerCase().trim();
+        if (!normalizedName) return;
+        
+        productsMap.set(normalizedName, {
+          name: product.name,
+          description: product.description || '',
+          images: Array.isArray(product.images) ? product.images : [],
+          category: product.category || '',
+          confidence: getConfidenceValue(product.confidence),
+          detectionMethod: 'dom'
+        });
+      } catch (error) {
+        logger.warn(`Error processing DOM product: ${error.message}`);
+      }
+    });
+  }
   
-  return Array.from(productsMap.values());
+  // Then add LLM products, which might have better semantic understanding
+  if (Array.isArray(llmProducts)) {
+    llmProducts.forEach(product => {
+      try {
+        if (!isValidProduct(product)) return;
+        
+        const normalizedName = (product.name || '').toString().toLowerCase().trim();
+        if (!normalizedName) return;
+        
+        const existing = productsMap.get(normalizedName);
+        if (!existing) {
+          productsMap.set(normalizedName, {
+            name: product.name,
+            description: product.description || '',
+            images: Array.isArray(product.images) ? product.images : [],
+            category: product.category || '',
+            confidence: getConfidenceValue(product.confidence) + 0.1,
+            detectionMethod: 'llm'
+          });
+        } else {
+          // Merge with existing product
+          productsMap.set(normalizedName, {
+            ...existing,
+            description: product.description || existing.description,
+            category: product.category || existing.category,
+            confidence: Math.max(
+              getConfidenceValue(existing.confidence),
+              getConfidenceValue(product.confidence) + 0.1
+            ),
+            detectionMethod: `${existing.detectionMethod},llm`
+          });
+        }
+      } catch (error) {
+        logger.warn(`Error processing LLM product: ${error.message}`);
+      }
+    });
+  }
+  
+  // Final cleanup and sorting
+  const products = Array.from(productsMap.values())
+    .filter(product => {
+      // Must have either a description or image
+      return product.description || (Array.isArray(product.images) && product.images.length > 0);
+    })
+    .sort((a, b) => getConfidenceValue(b.confidence) - getConfidenceValue(a.confidence));
+  
+  logger.info(`Merged ${products.length} products from ${productsMap.size} candidates`);
+  return products;
 }
 
 /**
- * Convert confidence value to a numeric value
- * @param {string|number} confidence - Confidence value
- * @returns {number} - Normalized confidence value
+ * Convert confidence values to numeric scores
  */
 function getConfidenceValue(confidence) {
   if (typeof confidence === 'number') {
     return confidence;
   }
   
-  if (typeof confidence === 'string') {
-    const lower = confidence.toLowerCase();
-    if (lower.includes('high')) return 0.9;
-    if (lower.includes('medium')) return 0.6;
-    if (lower.includes('low')) return 0.3;
-  }
-  
-  return 0.5; // Default confidence
+  const confidenceStr = String(confidence).toLowerCase();
+  if (confidenceStr.includes('high')) return 0.9;
+  if (confidenceStr.includes('medium')) return 0.6;
+  if (confidenceStr.includes('low')) return 0.3;
+  return 0.5;
 }
 
 module.exports = {

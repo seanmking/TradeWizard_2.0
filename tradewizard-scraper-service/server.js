@@ -12,8 +12,8 @@ const supabaseService = require('./supabase-service');
 
 // Initialize Express app
 const app = express();
-// Force port 3002 to avoid conflict with other services
-const PORT = process.env.PORT || 3002;
+// Use port from environment variable
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());

@@ -1,37 +1,50 @@
-import { MCPHandler, MCPResponse, MCPOutputMode } from '../../shared/schema';
+import { MCPHandler, MCPResponse } from '../../shared';
 import { mcpCache } from '../../shared/cache';
-import { MCPTransformer } from '../../shared/transform';
 import { ComplianceRequirement, ComplianceRequirementSchema } from '../types';
 import axios from 'axios';
 
-interface ComplianceHandlerParams {
-  country: string;
-  hs_code: string;
-  product_type?: string;
+export interface ComplianceData {
+  compliance: ComplianceRequirement;
 }
 
-export class ComplianceHandler implements MCPHandler<ComplianceRequirement> {
+export class ComplianceHandler implements MCPHandler<MCPResponse<ComplianceData>> {
   private static readonly CACHE_TTL = 24 * 60 * 60; // 24 hours
 
-  async handle(params: ComplianceHandlerParams): Promise<MCPResponse<ComplianceRequirement>> {
-    const cacheConfig = this.getCacheConfig(params);
-    const cachedData = await mcpCache.get<ComplianceRequirement>(cacheConfig.key);
+  async handle(params: Record<string, unknown>): Promise<MCPResponse<ComplianceData>> {
+    const validatedParams = {
+      country: String(params.country),
+      hs_code: String(params.hs_code),
+      product_type: params.product_type ? String(params.product_type) : undefined,
+      type: 'compliance'
+    };
+
+    const cacheConfig = this.getCacheConfig(validatedParams);
+    const cachedData = await mcpCache.get<ComplianceData>(cacheConfig.key);
     
     if (cachedData) {
-      return cachedData;
+      return {
+        status: 200,
+        data: cachedData,
+        message: 'Success',
+        metadata: {
+          source: 'Cache',
+          last_updated: new Date().toISOString(),
+          data_completeness: this.determineDataCompleteness(cachedData.compliance)
+        }
+      };
     }
 
     try {
       // Fetch data from multiple sources
       const [witsData, regulatoryData] = await Promise.all([
-        this.fetchWITSData(params),
-        this.fetchRegulatoryData(params)
+        this.fetchWITSData(validatedParams),
+        this.fetchRegulatoryData(validatedParams)
       ]);
 
       // Combine and validate data
       const complianceData: ComplianceRequirement = {
-        country: params.country,
-        hs_code: params.hs_code,
+        country: validatedParams.country,
+        hs_code: validatedParams.hs_code,
         certifications_required: regulatoryData.certifications || [],
         labeling_requirements: regulatoryData.labeling || 'Standard labeling applies',
         tariff_rate: witsData.tariff_rate || 'N/A',
@@ -45,64 +58,51 @@ export class ComplianceHandler implements MCPHandler<ComplianceRequirement> {
       // Validate with zod schema
       const validatedData = ComplianceRequirementSchema.parse(complianceData);
 
-      // Calculate confidence score based on data completeness
-      const confidence_score = this.calculateConfidenceScore(validatedData);
+      const data: ComplianceData = {
+        compliance: validatedData
+      };
 
-      // Transform output based on mode
-      const { ui_format, agent_format } = await MCPTransformer.transformOutput(
-        validatedData,
-        'both',
-        { context: `Compliance requirements for ${params.hs_code} in ${params.country}` }
-      );
+      // Cache the data
+      await mcpCache.set(cacheConfig.key, data, {
+        enabled: true,
+        ttl: ComplianceHandler.CACHE_TTL
+      });
 
-      const response: MCPResponse<ComplianceRequirement> = {
-        status: 'success',
-        data: validatedData,
-        ui_format,
-        agent_format,
-        confidence_score,
+      return {
+        status: 200,
+        data,
+        message: 'Success',
         metadata: {
           source: 'WITS + Regulatory DB',
           last_updated: new Date().toISOString(),
-          source_quality_score: 0.95,
           data_completeness: this.determineDataCompleteness(validatedData)
         }
       };
 
-      // Cache the response
-      await mcpCache.set(cacheConfig.key, response, cacheConfig);
-
-      return response;
-
     } catch (error) {
       console.error('Compliance MCP Error:', error);
       return {
-        status: 'error',
-        data: {} as ComplianceRequirement,
-        confidence_score: 0,
+        status: 500,
+        data: null,
+        message: error instanceof Error ? error.message : 'Unknown error',
         metadata: {
           source: 'Error',
           last_updated: new Date().toISOString(),
-          data_completeness: 'partial'
-        },
-        known_gaps: ['Failed to fetch compliance data'],
-        fallback_suggestions: [
-          'Check official government websites',
-          'Consult with a trade compliance expert'
-        ]
+          data_completeness: 'none'
+        }
       };
     }
   }
 
-  getCacheConfig(params: ComplianceHandlerParams) {
+  private getCacheConfig(params: Record<string, unknown>) {
     return {
+      enabled: true,
       ttl: ComplianceHandler.CACHE_TTL,
-      prefetch: true,
       key: mcpCache.generateKey('compliance', params)
     };
   }
 
-  private async fetchWITSData(params: ComplianceHandlerParams) {
+  private async fetchWITSData(params: Record<string, unknown>) {
     // TODO: Implement actual WITS API integration
     // Mock response for now
     return {
@@ -110,7 +110,7 @@ export class ComplianceHandler implements MCPHandler<ComplianceRequirement> {
     };
   }
 
-  private async fetchRegulatoryData(params: ComplianceHandlerParams) {
+  private async fetchRegulatoryData(params: Record<string, unknown>) {
     // TODO: Implement actual regulatory database integration
     // Mock response for now
     return {
@@ -124,22 +124,7 @@ export class ComplianceHandler implements MCPHandler<ComplianceRequirement> {
     };
   }
 
-  private calculateConfidenceScore(data: ComplianceRequirement): number {
-    const requiredFields = ['certifications_required', 'labeling_requirements', 'tariff_rate'];
-    const optionalFields = ['shelf_life_months', 'import_permits', 'special_requirements'];
-    
-    const requiredScore = requiredFields.reduce((score, field) => {
-      return score + (data[field as keyof ComplianceRequirement] ? 1 : 0);
-    }, 0) / requiredFields.length;
-
-    const optionalScore = optionalFields.reduce((score, field) => {
-      return score + (data[field as keyof ComplianceRequirement] ? 0.5 : 0);
-    }, 0) / optionalFields.length;
-
-    return Math.min(requiredScore * 0.7 + optionalScore * 0.3, 1);
-  }
-
-  private determineDataCompleteness(data: ComplianceRequirement): 'complete' | 'partial' | 'outdated' {
+  private determineDataCompleteness(data: ComplianceRequirement): 'complete' | 'partial' | 'none' {
     const requiredFields = ['certifications_required', 'labeling_requirements', 'tariff_rate'];
     const hasAllRequired = requiredFields.every(field => 
       data[field as keyof ComplianceRequirement]

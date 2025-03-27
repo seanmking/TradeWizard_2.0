@@ -1,5 +1,5 @@
 import Redis, { RedisOptions } from 'ioredis';
-import { MCPResponse, MCPCacheConfig } from './schema';
+import { MCPResponse, MCPCacheConfig } from './types';
 
 export class RedisCache {
   private client: Redis;
@@ -36,7 +36,7 @@ export class RedisCache {
   }
 }
 
-class MCPCache {
+export class MCPCache {
   private redis: Redis;
   private static instance: MCPCache;
 
@@ -51,24 +51,15 @@ class MCPCache {
     return MCPCache.instance;
   }
 
-  async get<T>(key: string): Promise<MCPResponse<T> | null> {
+  async get<T>(key: string): Promise<T | null> {
     const data = await this.redis.get(key);
     if (!data) return null;
-    return JSON.parse(data) as MCPResponse<T>;
+    return JSON.parse(data) as T;
   }
 
-  async set(key: string, value: MCPResponse<any>, config: MCPCacheConfig): Promise<void> {
-    await this.redis.set(
-      key,
-      JSON.stringify(value),
-      'EX',
-      config.ttl
-    );
-  }
-
-  async prefetch(keys: string[]): Promise<void> {
-    // Implement prefetching logic here
-    // This will be called by the prefetch engine
+  async set<T>(key: string, value: T, config: MCPCacheConfig): Promise<void> {
+    if (!config.enabled) return;
+    await this.redis.set(key, JSON.stringify(value), 'EX', config.ttl);
   }
 
   async invalidate(key: string): Promise<void> {
@@ -82,16 +73,19 @@ class MCPCache {
     }
   }
 
-  generateKey(mcpType: string, params: Record<string, any>): string {
+  generateKey(mcpType: string, params: Record<string, unknown>): string {
     const sortedParams = Object.keys(params)
       .sort()
-      .reduce((acc, key) => {
-        acc[key] = params[key];
-        return acc;
-      }, {} as Record<string, any>);
+      .reduce(
+        (acc, key) => {
+          acc[key] = params[key];
+          return acc;
+        },
+        {} as Record<string, unknown>
+      );
 
     return `mcp:${mcpType}:${JSON.stringify(sortedParams)}`;
   }
 }
 
-export const mcpCache = MCPCache.getInstance(); 
+export const mcpCache = MCPCache.getInstance();

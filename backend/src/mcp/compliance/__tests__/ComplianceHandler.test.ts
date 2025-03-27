@@ -1,5 +1,6 @@
-import { ComplianceHandler } from '../handlers/ComplianceHandler';
+import { ComplianceHandler, ComplianceData } from '../handlers/ComplianceHandler';
 import { mcpCache } from '../../shared/cache';
+import type { MCPResponse } from '../../shared';
 
 // Mock Redis cache
 jest.mock('../../shared/cache', () => ({
@@ -19,20 +20,13 @@ describe('ComplianceHandler', () => {
   });
 
   it('should return cached data if available', async () => {
-    const cachedData = {
-      status: 'success',
-      data: {
+    const cachedData: ComplianceData = {
+      compliance: {
         country: 'UAE',
         hs_code: '210690',
         certifications_required: ['HACCP'],
         labeling_requirements: 'Arabic + English',
         tariff_rate: '5%'
-      },
-      confidence_score: 0.95,
-      metadata: {
-        source: 'Cache',
-        last_updated: new Date().toISOString(),
-        data_completeness: 'complete'
       }
     };
 
@@ -40,10 +34,14 @@ describe('ComplianceHandler', () => {
 
     const result = await handler.handle({
       country: 'UAE',
-      hs_code: '210690'
+      hs_code: '210690',
+      type: 'compliance'
     });
 
-    expect(result).toEqual(cachedData);
+    expect(result.status).toBe(200);
+    expect(result.data).toEqual(cachedData);
+    expect(result.message).toBe('Success');
+    expect(result.metadata?.source).toBe('Cache');
     expect(mcpCache.get).toHaveBeenCalled();
     expect(mcpCache.set).not.toHaveBeenCalled();
   });
@@ -53,18 +51,19 @@ describe('ComplianceHandler', () => {
 
     const result = await handler.handle({
       country: 'UAE',
-      hs_code: '210690'
+      hs_code: '210690',
+      type: 'compliance'
     });
 
-    expect(result.status).toBe('success');
-    expect(result.data).toHaveProperty('country', 'UAE');
-    expect(result.data).toHaveProperty('hs_code', '210690');
-    expect(result.data).toHaveProperty('certifications_required');
-    expect(result.data).toHaveProperty('labeling_requirements');
-    expect(result.data).toHaveProperty('tariff_rate');
-    expect(result.confidence_score).toBeGreaterThan(0);
-    expect(result.metadata).toHaveProperty('source');
-    expect(result.metadata).toHaveProperty('data_completeness');
+    expect(result.status).toBe(200);
+    expect(result.data?.compliance).toBeDefined();
+    expect(result.data?.compliance?.country).toBe('UAE');
+    expect(result.data?.compliance?.hs_code).toBe('210690');
+    expect(result.data?.compliance?.certifications_required).toBeDefined();
+    expect(result.data?.compliance?.labeling_requirements).toBeDefined();
+    expect(result.data?.compliance?.tariff_rate).toBeDefined();
+    expect(result.metadata?.source).toBe('WITS + Regulatory DB');
+    expect(result.metadata?.data_completeness).toBeDefined();
     expect(mcpCache.get).toHaveBeenCalled();
     expect(mcpCache.set).toHaveBeenCalled();
   });
@@ -74,13 +73,13 @@ describe('ComplianceHandler', () => {
 
     const result = await handler.handle({
       country: 'INVALID',
-      hs_code: 'INVALID'
+      hs_code: 'INVALID',
+      type: 'compliance'
     });
 
-    expect(result.status).toBe('error');
-    expect(result.confidence_score).toBe(0);
-    expect(result.metadata.data_completeness).toBe('partial');
-    expect(result.known_gaps).toContain('Failed to fetch compliance data');
-    expect(result.fallback_suggestions).toHaveLength(2);
+    expect(result.status).toBe(500);
+    expect(result.data).toBeNull();
+    expect(result.message).toBe('Cache error');
+    expect(result.metadata?.data_completeness).toBe('none');
   });
 }); 

@@ -8,17 +8,17 @@ const marketIntelligenceHandler = new MarketIntelligenceHandler();
 // Input validation schemas
 const tradeFlowSchema = z.object({
   hs_code: z.string().min(6),
-  market: z.string().min(2)
+  market: z.string().min(2),
 });
 
 const buyerListSchema = z.object({
   industry: z.string().min(2),
-  country: z.string().min(2)
+  country: z.string().min(2),
 });
 
 const marketSizeSchema = z.object({
   product: z.string().min(2),
-  country: z.string().min(2)
+  country: z.string().min(2),
 });
 
 // GET /mcp/market/trade-flow/:hs_code/:market
@@ -26,15 +26,13 @@ router.get('/trade-flow/:hs_code/:market', async (req, res) => {
   try {
     const { hs_code, market } = tradeFlowSchema.parse({
       hs_code: req.params.hs_code,
-      market: req.params.market
+      market: req.params.market,
     });
-
-    const mode = (req.query.mode || 'both') as 'agent' | 'ui' | 'both';
-    const enhanced = req.query.enhanced === 'true';
 
     const response = await marketIntelligenceHandler.handle({
       hs_code,
-      market
+      market,
+      type: 'trade_flow',
     });
 
     res.json(response);
@@ -43,7 +41,7 @@ router.get('/trade-flow/:hs_code/:market', async (req, res) => {
     res.status(400).json({
       status: 'error',
       error: error instanceof Error ? error.message : 'Invalid request',
-      code: 'VALIDATION_ERROR'
+      code: 'VALIDATION_ERROR',
     });
   }
 });
@@ -53,15 +51,13 @@ router.get('/buyers/:industry/:country', async (req, res) => {
   try {
     const { industry, country } = buyerListSchema.parse({
       industry: req.params.industry,
-      country: req.params.country
+      country: req.params.country,
     });
-
-    const mode = (req.query.mode || 'both') as 'agent' | 'ui' | 'both';
-    const enhanced = req.query.enhanced === 'true';
 
     const response = await marketIntelligenceHandler.handle({
       industry,
-      country
+      country,
+      type: 'buyers',
     });
 
     res.json(response);
@@ -70,7 +66,7 @@ router.get('/buyers/:industry/:country', async (req, res) => {
     res.status(400).json({
       status: 'error',
       error: error instanceof Error ? error.message : 'Invalid request',
-      code: 'VALIDATION_ERROR'
+      code: 'VALIDATION_ERROR',
     });
   }
 });
@@ -80,15 +76,13 @@ router.get('/market-size/:product/:country', async (req, res) => {
   try {
     const { product, country } = marketSizeSchema.parse({
       product: req.params.product,
-      country: req.params.country
+      country: req.params.country,
     });
-
-    const mode = (req.query.mode || 'both') as 'agent' | 'ui' | 'both';
-    const enhanced = req.query.enhanced === 'true';
 
     const response = await marketIntelligenceHandler.handle({
       product,
-      country
+      country,
+      type: 'market_size',
     });
 
     res.json(response);
@@ -97,7 +91,7 @@ router.get('/market-size/:product/:country', async (req, res) => {
     res.status(400).json({
       status: 'error',
       error: error instanceof Error ? error.message : 'Invalid request',
-      code: 'VALIDATION_ERROR'
+      code: 'VALIDATION_ERROR',
     });
   }
 });
@@ -106,13 +100,13 @@ router.get('/trade-flow', async (req, res) => {
   try {
     const data = await marketIntelligenceHandler.handle({
       ...req.query,
-      type: 'trade_flow'
+      type: 'trade_flow',
     });
     res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -121,13 +115,13 @@ router.get('/tariff', async (req, res) => {
   try {
     const data = await marketIntelligenceHandler.handle({
       ...req.query,
-      type: 'tariff'
+      type: 'tariff',
     });
     res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -136,13 +130,13 @@ router.get('/historical', async (req, res) => {
   try {
     const data = await marketIntelligenceHandler.handle({
       ...req.query,
-      type: 'historical'
+      type: 'historical',
     });
     res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
@@ -151,15 +145,15 @@ router.get('/partners', async (req, res) => {
   try {
     const data = await marketIntelligenceHandler.handle({
       ...req.query,
-      type: 'partners'
+      type: 'partners',
     });
     res.json({ success: true, data });
   } catch (error) {
     res.status(400).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });
 
-export default router; 
+export default router;

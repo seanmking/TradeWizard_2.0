@@ -35,4 +35,6 @@ export interface MCPSchemaConfig {
 export interface MCPSchema<T> {
   validate(data: unknown): MCPValidationResult;
   transform(data: unknown): T;
-} 
+}
+
+export type MCPOutputMode = 'ui' | 'agent' | 'both';

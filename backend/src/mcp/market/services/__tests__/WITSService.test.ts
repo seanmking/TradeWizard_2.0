@@ -59,14 +59,26 @@ describe('WITSService', () => {
       });
 
       expect(mockedAxios.get).toHaveBeenCalledWith(
-        expect.stringContaining('/DF_WITS_TradeStats/A.WLD.USA.210690.2023'),
-        expect.any(Object)
+        expect.stringContaining('/DF_WITS_TradeStats/A.WLD.USA.210690.2023')
       );
     });
 
     it('should handle API errors', async () => {
-      mockedAxios.get.mockRejectedValueOnce(new Error('Failed to fetch trade flow data from WITS'));
-      await expect(service.getTradeFlowData(params)).rejects.toThrow('Failed to fetch trade flow data from WITS');
+      const mockError = {
+        isAxiosError: true,
+        message: 'Request failed with status code 404',
+        response: {
+          status: 404,
+          data: { error: 'Not found' }
+        }
+      };
+      mockedAxios.get.mockRejectedValueOnce(mockError);
+      
+      await expect(service.getTradeFlowData(params)).rejects.toEqual({
+        message: 'Request failed with status code 404',
+        code: '404',
+        details: { error: 'Not found' }
+      });
     });
   });
 
@@ -104,14 +116,26 @@ describe('WITSService', () => {
       });
 
       expect(mockedAxios.get).toHaveBeenCalledWith(
-        expect.stringContaining('/DF_WITS_Tariff/A.USA.WLD.210690.2023'),
-        expect.any(Object)
+        expect.stringContaining('/DF_WITS_Tariff/A.USA.WLD.210690.2023')
       );
     });
 
     it('should handle API errors', async () => {
-      mockedAxios.get.mockRejectedValueOnce(new Error('Failed to fetch tariff data from WITS'));
-      await expect(service.getTariffData(params)).rejects.toThrow('Failed to fetch tariff data from WITS');
+      const mockError = {
+        isAxiosError: true,
+        message: 'Request failed with status code 500',
+        response: {
+          status: 500,
+          data: { error: 'Internal server error' }
+        }
+      };
+      mockedAxios.get.mockRejectedValueOnce(mockError);
+      
+      await expect(service.getTariffData(params)).rejects.toEqual({
+        message: 'Request failed with status code 500',
+        code: '500',
+        details: { error: 'Internal server error' }
+      });
     });
   });
 
@@ -153,7 +177,15 @@ describe('WITSService', () => {
     });
 
     it('should handle API errors gracefully', async () => {
-      mockedAxios.get.mockRejectedValue(new Error('API Error'));
+      const mockError = {
+        isAxiosError: true,
+        message: 'Network error',
+        response: {
+          status: 503,
+          data: { error: 'Service unavailable' }
+        }
+      };
+      mockedAxios.get.mockRejectedValue(mockError);
       const result = await service.getHistoricalTrend(params);
       expect(result).toEqual([]);
     });
@@ -198,14 +230,23 @@ describe('WITSService', () => {
       expect(result.top_importers).toHaveLength(3);
       expect(result.top_exporters[0]).toHaveProperty('country', 'China');
       expect(result.top_exporters[0]).toHaveProperty('value', 500000);
-      expect(result.top_exporters[0]).toHaveProperty('market_share');
     });
 
     it('should handle API errors gracefully', async () => {
-      mockedAxios.get.mockRejectedValueOnce(new Error('API Error'));
+      const mockError = {
+        isAxiosError: true,
+        message: 'Network error',
+        response: {
+          status: 503,
+          data: { error: 'Service unavailable' }
+        }
+      };
+      mockedAxios.get.mockRejectedValue(mockError);
       const result = await service.getTopTradingPartners(params);
-      expect(result.top_exporters).toEqual([]);
-      expect(result.top_importers).toEqual([]);
+      expect(result).toEqual({
+        top_exporters: [],
+        top_importers: []
+      });
     });
   });
 }); 

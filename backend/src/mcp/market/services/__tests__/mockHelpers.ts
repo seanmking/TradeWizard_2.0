@@ -1,26 +1,36 @@
+import axios from 'axios';
+
+type AxiosResponse<T = any> = ReturnType<typeof axios.create> extends {
+  get: (...args: any[]) => Promise<infer R>;
+} ? R : never;
+
+interface MockAxiosResponse<T = any> {
+  data: T;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  config: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    baseURL?: string;
+    timeout?: number;
+  };
+}
+
 // Helper function to create mock Axios responses with proper typing
-export function createMockAxiosResponse<T>(data: T, status: number = 200) {
+export function createMockAxiosResponse<T = any>(data: T): MockAxiosResponse<T> {
   return {
     data,
-    status,
+    status: 200,
     statusText: 'OK',
     headers: {},
     config: {
       url: 'http://wits.worldbank.org/API/V1/SDMX/V21/rest/data',
-      method: 'get',
+      method: 'GET',
       headers: {},
-      transformRequest: [(data: unknown) => data],
-      transformResponse: [(data: unknown) => data],
-      timeout: 0,
-      xsrfCookieName: 'XSRF-TOKEN',
-      xsrfHeaderName: 'X-XSRF-TOKEN',
-      maxContentLength: -1,
-      maxBodyLength: -1,
-      transitional: {
-        silentJSONParsing: true,
-        forcedJSONParsing: true,
-        clarifyTimeoutError: false
-      }
+      baseURL: 'http://wits.worldbank.org/API/V1/SDMX/V21/rest/data',
+      timeout: 10000
     }
-  } as any;
+  };
 } 
